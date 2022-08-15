@@ -1,0 +1,266 @@
+import mmu { MMU }
+
+enum Terminal {
+    GB  // Original GameBoy (GameBoy Classic)
+    GBP // GameBoy Pocket/GameBoy Light
+    GBC // GameBoy Color
+    SGB // Super GameBoy
+}
+
+enum Flag: u8 {
+    Z = 0b1000_0000
+    N = 0b0100_0000
+    H = 0b0010_0000
+    C = 0b0001_0000
+}
+
+class CPU {
+    a: u8 // accumulator
+    b: u8
+    c: u8
+    d: u8
+    e: u8
+    f: u8 // flags Z, N, H, C
+    h: u8
+    l: u8
+    sp: u16 // Stack Pointer
+    pc: u16 // Program Counter
+    ei: bool // Enable Interrupt Flag
+    debug: bool
+
+    public function init(terminal: Terminal, debug: bool = false) throws -> CPU {
+        return CPU(
+            a: match terminal {
+                GB => 0x01
+                GBP => 0xFF
+                GBC => 0x11
+                SGB => 0x01
+            } as! u8
+            b: 0x00
+            c: 0x13
+            d: 0x00
+            e: 0xD8
+            f: 0xB0
+            h: 0x01
+            l: 0x4D
+            sp: 0xFFFe
+            pc: 0x0100
+            ei: true
+            debug
+        )
+    }
+
+    public function print_debug(this) {
+        println("===========================================================================================")
+        println("A: 0x{:X}, B: 0x{:X}, C: 0x{:X}, D: 0x{:X}, E: 0x{:X}, F: 0x{:X}, H: 0x{:X}, L: 0x{:X}", .a, .b, .c, .d, .e, .f, .h, .l)
+        println("PC: 0x{:X}, SP: 0x{:X}, fZ: 0x{:X}, fN: 0x{:X}, fH: 0x{:X}, fC: 0x{:X}", .pc, .sp, .get_flag(Flag::Z), .get_flag(Flag::N), .get_flag(Flag::H), .get_flag(Flag::C))
+        println("===========================================================================================")
+    }
+
+    function set_flag(mut this, anon flag: Flag, value: bool) {
+        if value {
+            .f = .f | flag as! u8
+        } else {
+            .f = .f & ~flag as! u8
+        }
+    }
+
+    function get_flag(this, anon flag: Flag) => .f & (flag as! u8) != 0
+    function get_af(this) => (.a as! u16) << 8 | .f
+    function get_bc(this) => (.b as! u16) << 8 | .c
+    function get_de(this) => (.d as! u16) << 8 | .e
+    function get_hl(this) => (.h as! u16) << 8 | .l
+
+    function stack_push(mut this, mmu: &mut MMU, value: u16) {
+        .sp -= 2
+        mmu.write_word(addr: .sp, value)
+    }
+
+    function stack_pop(mut this, mmu: &mut MMU) -> u16{
+        let result = mmu.read_word(addr: .sp)
+        .sp += 2
+        return result
+    }
+
+    function set_af(mut this, anon value: u16) {
+        .a = (value >> 8) as! u8
+        .f = (value & 0x00FF) as! u8
+    }
+
+    function set_bc(mut this, anon value: u16) {
+        .b = (value >> 8) as! u8
+        .c = (value & 0x00FF) as! u8
+    }
+
+    function set_de(mut this, anon value: u16) {
+        .d = (value >> 8) as! u8
+        .e = (value & 0x00FF) as! u8
+    }
+
+    function set_hl(mut this, anon value: u16) {
+        .h = (value >> 8) as! u8
+        .l = (value & 0x00FF) as! u8
+    }
+
+    function fetch(mut this, mmu: &mut MMU) -> u8 {
+        let value = mmu.read(addr: .pc)
+        .pc += 1
+        return value
+    }
+
+    function fetch_word(mut this, mmu: &mut MMU) -> u16 {
+        let word = mmu.read_word(addr: .pc)
+        .pc += 2
+        return word
+    }
+
+    public function tick(mut this, mmu: &mut MMU) {
+        let opcode = .fetch(mmu)
+        let cycles = .execute(mmu, opcode)
+    }
+
+    function execute(mut this, mmu: &mut MMU, opcode: u8) -> u32 {
+        mut cycles: u32 = 0
+        match opcode {
+
+            // nop
+            0x00u8 => { 
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] NOOP", opcode) }
+            }
+
+            0x01u8 | 0x11u8 | 0x21u8 | 0x31u8 => { 
+                let value = .fetch_word(mmu)
+                match opcode {
+                    0x01u8 => .set_bc(value)
+                    0x11u8 => .set_de(value)
+                    0x21u8 => .set_hl(value)
+                    0x31u8 => { 
+                        .sp = value
+                        if .debug { println("[OP 0x{:X}] Load value {:X} into SP", opcode, value) }
+                    }
+                    else => {}
+                }
+                cycles = 12
+            }
+
+            0x02u8 => {
+                let addr = .get_bc()
+                mmu.write(addr, value: .a)
+                cycles = 8
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into ADDR 0x{:x}", opcode, .a, addr) }
+            }
+
+            0x04u8 => {
+                let value = (.b + 1) & 0xFF
+                .set_flag(Flag::H, value: (.b & 0x0F) + 0x01 > 0x0F)
+                .set_flag(Flag::N, value: false)
+                .set_flag(Flag::Z, value: value == 0x00)
+                .b = value
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] INC REG B", opcode) }
+            }
+
+            0x18u8 => {
+                let value = .fetch(mmu)
+                let n = value as! i8
+                .pc = (((.pc as! u32) as! i32) + (n as! i32)) as! u16
+                cycles = 12
+                if .debug { println("[OP 0x{:X}] JUMP to 0x{:X}", opcode, .pc) }
+            }
+
+            // ????????????????
+            0x3Eu8 => {
+                let value = .fetch(mmu)
+                .a = value
+                cycles = 8
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into REG A", opcode, value) }
+            }
+
+            0x59u8 => {
+                let value = .c
+                .e = value
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG C into REG E", opcode, value) }
+            }
+
+            0x7Cu8 => {
+                .a = .h
+                cycles = 8
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG H into REG A", opcode, .h) }
+            }
+
+            0x7Du8 => {
+                .a = .l
+                cycles = 8
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG L into REG A", opcode, .l) }
+            }
+
+            0xA3u8 => {
+                let value = .a & .e
+                .set_flag(flag: Flag::C, value: false)
+                .set_flag(flag: Flag::H, value: true)
+                .set_flag(flag: Flag::N, value: false)
+                .set_flag(flag: Flag::Z, value: value == 0x00)
+                .a = value
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] ALU REG A, E (0x{:X})", opcode, value) }
+            }
+
+            // jp nn
+            0xC3u8 => {
+                .pc = .fetch_word(mmu)
+                cycles = 16
+                if .debug { println("[OP 0x{:X}] JUMP to {:X}", opcode, .pc) }
+            }
+
+            // Return
+            0xC9u8 => {
+                .pc = .stack_pop(mmu)
+                cycles = 16
+                if .debug { println("[OP 0x{:X}] RETURN to {:X}", opcode, .pc) }
+            }
+
+            0xCDu8 => {
+                .stack_push(mmu, value: .pc + 2)
+                .pc = .fetch_word(mmu)
+                cycles = 24
+                if .debug { println("[OP 0x{:X}] CALL SP 0x{:X}", opcode, .pc) }
+            }
+
+            // ld (FF00+n),A
+            0xE0u8 => {
+                let addr = 0xff00u16 | (.fetch(mmu) as! u16)
+                .a = mmu.read(addr)
+                cycles = 12
+                if .debug { println("[OP 0x{:X}] reading val (0x{:X}) from Memory addr: 0x{:X} into REG A", opcode, .a, addr) }
+            }
+
+            0xEAu8 => {
+                let addr = .fetch_word(mmu)
+                mmu.write(addr, value: .a)
+                cycles = 16
+                if .debug { println("[OP 0x{:X}] Loading value (0x{:X}) into addr 0x{:X}", opcode, .a, addr) }
+            }
+
+            // di
+            0xF3u8 => {
+                .ei = false
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] EI (Enable Interrupt) Flag set to 'false'", opcode) }
+            }
+
+            else => {
+                eprintln("[OP 0x{:X}] Ilegal/Not Implemented instruction", opcode)
+                abort()
+            }
+        }
+
+        guard cycles >= 4 else {
+            eprintln("[OP 0x{:X}] Invalid number of cycles", opcode)
+            abort()
+        }
+
+        return cycles
+    }
+}

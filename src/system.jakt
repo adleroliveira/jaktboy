@@ -1,0 +1,24 @@
+import cpu { CPU, Terminal }
+import mmu { MMU }
+import cartridge { Cartridge }
+
+class System {
+    cpu: CPU
+    mmu: MMU
+
+    public function init(filename: String) throws -> System {
+        mut file = File::open_for_reading(filename)
+        let buffer = file.read_all()
+        let cartridge = Cartridge::load(buffer)
+        mut cpu = CPU::init(terminal: Terminal::GB, debug: true)
+        mut mmu = MMU::init(cartridge)
+
+        for i in 0..50 {
+            cpu.print_debug()
+            cpu.tick(mmu: &mut mmu)
+        }
+
+        println("END OF 50 instructions")
+        return System(cpu, mmu)
+    }
+}

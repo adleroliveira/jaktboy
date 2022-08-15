@@ -1,0 +1,366 @@
+enum BankMode {
+    Rom
+    Ram
+}
+
+enum ColorMode {
+    GBC
+    GB
+
+    public function from_byte(anon code: u8) => match code & 0x80 {
+        0x80u8 => ColorMode::GBC
+        else => ColorMode::GB
+    }
+}
+
+enum CartridgeType {
+    RomOnly
+    Mbc1
+    Mbc1Ram
+    Mbc1RamBattery
+    Mbc2
+    Mbc2Battery
+    RomRam
+    RomRamBattery
+    Mmm01
+    Mmm01Ram
+    Mmm01RamBattery
+    Mbc3TimerBattery
+    Mbc3TimerRamBattery
+    Mbc3
+    Mbc3Ram
+    Mbc3RamBattery
+    Mbc5
+    Mbc5Ram
+    Mbc5RamBattery
+    Mbc5Rumble
+    Mbc5RumbleRam
+    Mbc5RumbleRamBattery
+    Mbc6
+    Mbc7SensorRumbleRamBattery
+    PocketCamera
+    BandaiTama5
+    Huc3
+    Huc1RamBattery
+    Unknown
+
+    public function from_byte(anon code: u8) => match code {
+        0x00u8 => CartridgeType::RomOnly
+        0x01u8 => CartridgeType::Mbc1
+        0x02u8 => CartridgeType::Mbc1Ram
+        0x03u8 => CartridgeType::Mbc1RamBattery
+        0x05u8 => CartridgeType::Mbc2
+        0x06u8 => CartridgeType::Mbc2Battery
+        0x08u8 => CartridgeType::RomRam
+        0x09u8 => CartridgeType::RomRamBattery
+        0x0Bu8 => CartridgeType::Mmm01
+        0x0Cu8 => CartridgeType::Mmm01Ram
+        0x0Du8 => CartridgeType::Mmm01RamBattery
+        0x0Fu8 => CartridgeType::Mbc3TimerBattery
+        0x10u8 => CartridgeType::Mbc3TimerRamBattery
+        0x11u8 => CartridgeType::Mbc3
+        0x12u8 => CartridgeType::Mbc3Ram
+        0x13u8 => CartridgeType::Mbc3RamBattery
+        0x19u8 => CartridgeType::Mbc5
+        0x1Au8 => CartridgeType::Mbc5Ram
+        0x1Bu8 => CartridgeType::Mbc5RamBattery
+        0x1Cu8 => CartridgeType::Mbc5Rumble
+        0x1Du8 => CartridgeType::Mbc5RumbleRam
+        0x1Eu8 => CartridgeType::Mbc5RumbleRamBattery
+        0x20u8 => CartridgeType::Mbc6
+        0x22u8 => CartridgeType::Mbc7SensorRumbleRamBattery
+        0xFCu8 => CartridgeType::PocketCamera
+        0xFDu8 => CartridgeType::BandaiTama5
+        0xFEu8 => CartridgeType::Huc3
+        0xFFu8 => CartridgeType::Huc1RamBattery
+        else => {
+            eprintln("Unknown Cartridge Type: {}", code)
+            abort()
+        }
+    }
+}
+
+enum Publisher {
+    None
+    NintendoRD1
+    Capcom
+    ElectronicArts
+    HudsonSoft
+    Bai
+    Kss
+    Pow
+    PCMComplete
+    SanX
+    KemcoJapan
+    Seta
+    Viacom
+    Nintendo
+    Bandai
+    OceanAcclaim
+    Konami
+    Hector
+    Taito
+    Hudson
+    Banpresto
+    UbiSoft
+    Atlus
+    Malibu
+    Angel
+    BulletProof
+    Irem
+    Absolute
+    Acclaim
+    Activision
+    AmericanSammy
+    HiTechEntertainment
+    LJN
+    MatchBox
+    Mattel
+    MiltonBradley
+    Titus
+    Virgin
+    LucasArts
+    Ocean
+    Infogrames
+    Interplay
+    Broderbund
+    Sculptured
+    SCI
+    THQ
+    Accolade
+    Misawa
+    Lozc
+    TokumaShotenIntermedia
+    TsukudaOriginal
+    Chunsoft
+    VideoSystem
+    Varie
+    YonezawaSpal
+    Kaneko
+    PackInSoft
+    KonamiYuGiOh
+
+    function from_bytes(anon code: u16) => match code {
+        0x00u16 => Publisher::None
+        0x01u16 => Publisher::NintendoRD1
+        0x08u16 => Publisher::Capcom
+        0x13u16 => Publisher::ElectronicArts
+        0x18u16 => Publisher::Hudson
+        0x19u16 => Publisher::Bai
+        0x20u16 => Publisher::Kss
+        0x22u16 => Publisher::Pow
+        0x24u16 => Publisher::PCMComplete
+        0x25u16 => Publisher::SanX
+        0x28u16 => Publisher::KemcoJapan
+        0x29u16 => Publisher::Seta
+        0x30u16 => Publisher::Viacom
+        0x31u16 => Publisher::Nintendo
+        0x32u16 => Publisher::Bandai
+        0x33u16 | 0x93u16 => Publisher::OceanAcclaim
+        0x34u16 | 0x54u16 => Publisher::Konami
+        0x35u16 => Publisher::Hector
+        0x37u16 => Publisher::Taito
+        0x38u16 => Publisher::Hudson
+        0x39u16 => Publisher::Banpresto
+        0x41u16 => Publisher::UbiSoft
+        0x42u16 => Publisher::Atlus
+        0x44u16 => Publisher::Malibu
+        0x46u16 => Publisher::Angel
+        0x47u16 => Publisher::BulletProof
+        0x49u16 => Publisher::Irem
+        0x50u16 => Publisher::Absolute
+        0x51u16 => Publisher::Acclaim
+        0x52u16 => Publisher::Activision
+        0x53u16 => Publisher::AmericanSammy
+        0x55u16 => Publisher::HiTechEntertainment
+        0x56u16 => Publisher::LJN
+        0x57u16 => Publisher::MatchBox
+        0x58u16 => Publisher::Mattel
+        0x59u16 => Publisher::MiltonBradley
+        0x60u16 => Publisher::Titus
+        0x61u16 => Publisher::Virgin
+        0x64u16 => Publisher::LucasArts
+        0x67u16 => Publisher::Ocean
+        0x69u16 => Publisher::ElectronicArts
+        0x70u16 => Publisher::Infogrames
+        0x71u16 => Publisher::Interplay
+        0x72u16 => Publisher::Broderbund
+        0x73u16 => Publisher::Sculptured
+        0x75u16 => Publisher::SCI
+        0x78u16 => Publisher::THQ
+        0x79u16 => Publisher::Accolade
+        0x80u16 => Publisher::Misawa
+        0x83u16 => Publisher::Lozc
+        0x86u16 => Publisher::TokumaShotenIntermedia
+        0x87u16 => Publisher::TsukudaOriginal
+        0x91u16 => Publisher::Chunsoft
+        0x92u16 => Publisher::VideoSystem
+        0x95u16 => Publisher::Varie
+        0x96u16 => Publisher::YonezawaSpal
+        0x97u16 => Publisher::Kaneko
+        0x99u16 => Publisher::PackInSoft
+        0xA4u16 => Publisher::KonamiYuGiOh
+        else => {
+            eprintln("Unknown Publisher: {}", code)
+            abort()
+        }
+    }
+}
+
+enum RomSize {
+    _32KiB
+    _64KiB
+    _128KiB
+    _256KiB
+    _512KiB
+    _1MiB
+    _2MiB
+    _4MiB
+    _8MiB
+    _1point1MiB
+    _1point2MiB
+    _1point5MiB
+
+    public function from_byte(anon code: u8) => match code {
+        0x00u8 => RomSize::_32KiB
+        0x01u8 => RomSize::_64KiB
+        0x02u8 => RomSize::_128KiB
+        0x03u8 => RomSize::_256KiB
+        0x04u8 => RomSize::_512KiB
+        0x05u8 => RomSize::_1MiB
+        0x06u8 => RomSize::_2MiB
+        0x07u8 => RomSize::_4MiB
+        0x08u8 => RomSize::_8MiB
+        0x52u8 => RomSize::_1point1MiB
+        0x53u8 => RomSize::_1point2MiB
+        0x54u8 => RomSize::_1point5MiB
+        else => {
+            eprintln("Unknown Rom Size: {}", code)
+            abort()
+        }
+    }
+}
+
+enum RamSize {
+    NoRam
+    Unused
+    _1Bank
+    _4Banks
+    _16Banks
+    _8Banks
+
+    public function from_byte(anon code: u8) => match code {
+        0x00u8 => RamSize::NoRam
+        0x01u8 => RamSize::Unused
+        0x02u8 => RamSize::_1Bank
+        0x03u8 => RamSize::_4Banks
+        0x04u8 => RamSize::_16Banks
+        0x05u8 => RamSize::_8Banks
+        else => {
+            eprintln("Unknown Ram Size: {}", code)
+            abort()
+        }
+    }
+}
+
+enum Destination {
+    Japan
+    OverSeas
+
+    public function from_byte(anon code: u8) => match code {
+        0x00u8 => Destination::Japan
+        0x01u8 => Destination::OverSeas
+        else => {
+            eprintln("Unknown Destination code: {}", code)
+            abort()
+        }
+    }
+}
+
+function to_string(anon slice: ArraySlice<u8>) throws -> String {
+    mut s = StringBuilder::create()
+    for b in slice.iterator() {
+        s.append(b)
+    }
+    return s.to_string()
+}
+
+function to_word(anon a: u8, anon b: u8) => ((a << 8) | b) as! u16
+
+struct CartridgeHeader {
+    entry_point: [u8]
+    nintendo_logo: [u8]
+    title: String
+    manufacturer_code: String
+    color_mode: ColorMode
+    // publisher: String
+    sgb: bool
+    cartridge_type: CartridgeType
+    rom_size: RomSize
+    ram_size: RamSize
+    destination: Destination
+    old_license_code: bool
+    version: usize
+    header_checksum: u8
+    global_checksum: u16
+
+    function from_bytes(anon rom: [u8]) throws -> CartridgeHeader {
+        guard rom.size() > 335 else {
+            eprintln("Invalid Cartridge")
+            abort()
+        }
+
+        // mut global_checksum = 0
+        // for i in 0..rom.size() - 2 {
+        //     global_checksum += rom[i] as! i64
+        // }
+        // println("Global checksum {}", global_checksum)
+
+        // println("{:x} {:x} {:#}" rom[0x14E], rom[0x14F], to_word(rom[0x14E], rom[0x14F]))
+
+        return CartridgeHeader(
+            entry_point: rom[0x100..0x104].to_array()
+            nintendo_logo: rom[0x104..0x134].to_array()
+            title: to_string(rom[0x134..0x144])
+            // FIXME: Actually decide when to interpret this byte and set ManufacturerCode
+            manufacturer_code: to_string(rom[0x13F..0x143])
+            color_mode: ColorMode::from_byte(rom[0x143])
+            // publisher: to_string(rom[0x144..0x146])
+            sgb: rom[0x146] == 0x03u8
+            cartridge_type: CartridgeType::from_byte(rom[0x147])
+            rom_size: RomSize::from_byte(rom[0x148])
+            ram_size: RamSize::from_byte(rom[0x149])
+            destination: Destination::from_byte(rom[0x14A])
+            old_license_code: rom[0x14B] == 0x33u8
+            version: rom[0x14B] as! usize
+            header_checksum: rom[0x14D]
+            global_checksum: to_word(rom[0x14E], rom[0x14F])
+        )
+    }
+}
+
+struct Cartridge {
+    rom: [u8]
+    public header: CartridgeHeader
+
+    public function read(this, addr: u16) -> u8 {
+        return .rom[addr]
+    }
+
+    public function write(mut this, addr: u16, value: u8) {
+        .rom[addr] = value
+    }
+
+    public function load(anon rom: [u8]) throws -> Cartridge {
+        let header = CartridgeHeader::from_bytes(rom)
+        return Cartridge(rom, header)
+    }
+}
+
+// BMC1 Memory Range (0000-7FFF)
+
+// 0000-3FFF - ROM Bank 00 (Read Only)
+// This area always contains the first 16KBytes of the cartridge ROM.
+struct MBC1 {
+
+}

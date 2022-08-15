@@ -1,0 +1,34 @@
+struct Clock {
+    period: u32
+    n: u32
+}
+
+struct TimerRegister {
+    div: u8
+    tima: u8
+    tma: u8
+    tac: u8
+}
+
+struct Timer {
+    registers: TimerRegister
+    div_clock: Clock
+    tma_clock: Clock
+
+    public function init() => Timer(
+        registers: TimerRegister(div: 0u8, tima: 0u8, tma: 0u8, tac: 0u8)
+        div_clock: Clock(period: 256, n:0)
+        tma_clock: Clock(period: 1024, n:0)
+    )
+
+    public function read(this, addr: u16) => match addr {
+        0xFF04u16 => .registers.div
+        0xFF05u16 => .registers.tima
+        0xFF06u16 => .registers.tma
+        0xFF07u16 => .registers.tac
+        else => {
+            eprintln("[TIMER] Unsupported address 0x{:x}", addr)
+            abort()
+        }
+    }
+}

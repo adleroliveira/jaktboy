@@ -1,0 +1,13 @@
+import system { System }
+
+function main(args: [String]) {
+
+    guard args.size() > 1 else {
+        eprintln("usage: jaktboy <rom file>")
+        return -1
+    }
+    
+    let filename = args[1]
+    mut system = System::init(filename)
+    // println("{}", system)
+}
