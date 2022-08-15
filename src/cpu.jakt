@@ -65,11 +65,11 @@ class CPU {
         }
     }
 
-    function get_flag(this, anon flag: Flag) => .f & (flag as! u8) != 0
-    function get_af(this) => (.a as! u16) << 8 | .f
-    function get_bc(this) => (.b as! u16) << 8 | .c
-    function get_de(this) => (.d as! u16) << 8 | .e
-    function get_hl(this) => (.h as! u16) << 8 | .l
+    function get_flag(this, anon flag: Flag) -> bool => .f & (flag as! u8) != 0
+    function get_af(this) -> u16 => (.a as! u16) << 8 | .f
+    function get_bc(this) -> u16 => (.b as! u16) << 8 | .c
+    function get_de(this) -> u16 => (.d as! u16) << 8 | .e
+    function get_hl(this) -> u16 => (.h as! u16) << 8 | .l
 
     function stack_push(mut this, mmu: &mut MMU, value: u16) {
         .sp -= 2
@@ -114,13 +114,119 @@ class CPU {
         return word
     }
 
-    public function tick(mut this, mmu: &mut MMU) {
+    public function tick(mut this, mmu: &mut MMU) throws {
         let opcode = .fetch(mmu)
         let cycles = .execute(mmu, opcode)
     }
 
-    function execute(mut this, mmu: &mut MMU, opcode: u8) -> u32 {
+    function ld_r8_n8(mut this, anon opcode: u8, mmu: &mut MMU) throws {
+        let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
+        match (opcode >> 3) & 7 {
+            0u8 => { .b = .fetch(mmu) }
+            1u8 => { .c = .fetch(mmu) }
+            2u8 => { .d = .fetch(mmu) }
+            3u8 => { .e = .fetch(mmu) }
+            4u8 => { .h = .fetch(mmu) }
+            5u8 => { .l = .fetch(mmu) }
+            7u8 => { .a = .fetch(mmu) }
+            else => {
+                eprintln("Error decoding REG from opcode (ld_r8_n8)")
+                abort()
+            }
+        }
+        if .debug { println("[OP 0x{:X}] LOAD immediate value to REG {}", opcode, regname[(opcode >> 3) & 7]) }
+    }
+
+    function ld_r8_hl(mut this, anon opcode: u8, mmu: &mut MMU) throws {
+        let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
+        match (opcode >> 3) & 7 {
+            0u8 => { .b = mmu.read(addr: .get_hl()) }
+            1u8 => { .c = mmu.read(addr: .get_hl()) }
+            2u8 => { .d = mmu.read(addr: .get_hl()) }
+            3u8 => { .e = mmu.read(addr: .get_hl()) }
+            4u8 => { .h = mmu.read(addr: .get_hl()) }
+            5u8 => { .l = mmu.read(addr: .get_hl()) }
+            7u8 => { .a = mmu.read(addr: .get_hl()) }
+            else => {
+                eprintln("Error decoding REG from opcode (ld_r_hl)")
+                abort()
+            }
+        }
+        if .debug { println("[OP 0x{:X}] LOAD value from ADDR in HL (0x{:X}) into REG {}", opcode, .get_hl(), regname[(opcode >> 3) & 7]) }
+    }
+
+    function ld_hl_r8(mut this, anon opcode: u8, mmu: &mut MMU) throws {
+        let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
+        let value = match opcode & 7 {
+            0u8 => .b
+            1u8 => .c
+            2u8 => .d
+            3u8 => .e
+            4u8 => .h
+            5u8 => .l
+            7u8 => .a
+            else => {
+                eprintln("Error decoding REG from opcode (ld_r8_r8)")
+                abort()
+            }
+        }
+        mmu.write(addr: .get_hl(), value)
+        if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG {} into REG {}", opcode, value, regname[opcode & 7], regname[(opcode >> 3) & 7]) }
+    }
+
+    function ld_r8_r8(mut this, anon opcode: u8) throws {
+        let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
+        let value = match opcode & 7 {
+            0u8 => .b
+            1u8 => .c
+            2u8 => .d
+            3u8 => .e
+            4u8 => .h
+            5u8 => .l
+            7u8 => .a
+            else => {
+                eprintln("Error decoding REG from opcode (ld_r8_r8)")
+                abort()
+            }
+        }
+        match (opcode >> 3) & 7 {
+            0u8 => { .b = value }
+            1u8 => { .c = value }
+            2u8 => { .d = value }
+            3u8 => { .e = value }
+            4u8 => { .h = value }
+            5u8 => { .l = value }
+            7u8 => { .a = value }
+            else => {
+                eprintln("Error decoding REG from opcode (ld_r8_r8)")
+                abort()
+            }
+        }
+        if .debug { println("[OP 0x{:X}] LOAD REG {} into REG {}", opcode, regname[opcode & 7], regname[(opcode >> 3) & 7]) }
+    }
+
+    function execute(mut this, mmu: &mut MMU, opcode: u8) throws -> i64 {
         mut cycles: u32 = 0
+
+        let op_cycles: [i64] = [
+            1, 3, 2, 2, 1, 1, 2, 1, 5, 2, 2, 2, 1, 1, 2, 1, // 0
+            0, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1, // 1
+            2, 3, 2, 2, 1, 1, 2, 1, 2, 2, 2, 2, 1, 1, 2, 1, // 2
+            2, 3, 2, 2, 3, 3, 3, 1, 2, 2, 2, 2, 1, 1, 2, 1, // 3
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 4
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 5
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 6
+            2, 2, 2, 2, 2, 2, 0, 2, 1, 1, 1, 1, 1, 1, 2, 1, // 7
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 8
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 9
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // a
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // b
+            2, 3, 3, 4, 3, 4, 2, 4, 2, 4, 3, 0, 3, 6, 2, 4, // c
+            2, 3, 3, 0, 3, 4, 2, 4, 2, 4, 3, 0, 3, 0, 2, 4, // d
+            3, 3, 2, 0, 0, 4, 2, 4, 4, 1, 4, 0, 0, 0, 2, 4, // e
+            3, 3, 2, 1, 0, 4, 2, 4, 3, 2, 4, 1, 0, 0, 2, 4, // f
+        ]
+
         match opcode {
 
             // nop
@@ -129,6 +235,137 @@ class CPU {
                 if .debug { println("[OP 0x{:X}] NOOP", opcode) }
             }
 
+            // LD Instructions
+            // ==========================================================================================================
+
+            // LD (r16), A
+            0x02u8 => {
+                mmu.write(addr: .get_bc(), value: .a)
+                if .debug { println("[OP 0x{:X}] LOAD value from REG A into ADDR 0x{:X} from BC", opcode, .get_bc()) }
+            }
+            0x12u8 => {
+                mmu.write(addr: .get_de(), value: .a)
+                if .debug { println("[OP 0x{:X}] LOAD value from REG A into ADDR 0x{:X} from DE", opcode, .get_de()) }
+            }
+
+            // LD A, (r16)
+            0x0Au8 => {
+                .a = mmu.read(addr: .get_bc())
+                if .debug { println("[OP 0x{:X}] LOAD value from ADDR 0x{:X} into REG A", opcode, .get_bc()) }
+            }
+            0x1Au8 => {
+                .a = mmu.read(addr: .get_de())
+                if .debug { println("[OP 0x{:X}] LOAD value from ADDR 0x{:X} into REG A", opcode, .get_de()) }
+            }
+
+            // LD (HL),n
+            0x36u8 => {
+                let addr = .get_hl()
+                let value = .fetch(mmu)
+                mmu.write(addr, value)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from HL into ADDR 0x{:X}", opcode, value, addr) }
+            }
+
+            // LD A, (a16)
+            0xFAu8 => {
+                let addr = .fetch_word(mmu)
+                .a = mmu.read(addr)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x:{:X}) in ADDR 0x{:X} into REG A", opcode, .a, addr) }
+            }
+
+            // LD (a16), A
+            0xEAu8 => {
+                let addr = .fetch_word(mmu)
+                mmu.write(addr, value: .a)
+                if .debug { println("[OP 0x{:X}] Loading value (0x{:X}) into addr 0x{:X}", opcode, .a, addr) }
+            }
+
+            // ld A,(FF00+n)
+            0xF0u8 => {
+                let addr = 0xFF00u16 | (.fetch(mmu) as! u16)
+                .a = mmu.read(addr)
+                if .debug { println("[OP 0x{:X}] Loading value (0x{:X}) into addr 0x{:X}", opcode, .a, addr) }
+            }
+
+            // ld (FF00+n),A
+            0xE0u8 => {
+                let addr = 0xff00u16 | (.fetch(mmu) as! u16)
+                .a = mmu.read(addr)
+                if .debug { println("[OP 0x{:X}] reading val (0x{:X}) from Memory addr: 0x{:X} into REG A", opcode, .a, addr) }
+            }
+
+            // ld A,(FF00+C)
+            0xF2u8 => {
+                let addr = 0xFF00u16 | (.c as! u16)
+                .a = mmu.read(addr)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from ADDR 0x{:X} into REG A", opcode, .a, addr) }
+            }
+
+            // ld (FF00+C),A
+            0xE2u8 => {
+                let addr = 0xFF00u16 | (.c as! u16)
+                mmu.write(addr, value: .a)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG A into ADDR 0x{:X}", opcode, .a, addr) }
+            }
+
+            // LD (HL+), A
+            0x22u8 => {
+                let addr = .get_hl()
+                mmu.write(addr, value: .a)
+                .set_hl(addr + 1)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG A into ADDR 0x{:X}, INC HL", opcode, .a, addr) }
+            }
+
+            // LD (HL-), A
+            0x32u8 => {
+                let addr = .get_hl()
+                mmu.write(addr, value: .a)
+                .set_hl(addr - 1)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG A into ADDR 0x{:X}, DEC HL", opcode, .a, addr) }
+            }
+
+            // LD A, (HL+)
+            0x2Au8 => {
+                let addr = .get_hl()
+                .a = mmu.read(addr)
+                .set_hl(addr + 1)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into REG A FROM ADDR 0x{:X}, INC HL", opcode, .a, addr) }
+            }
+
+            // LD A, (HL-)
+            0x3Au8 => {
+                let addr = .get_hl()
+                .a = mmu.read(addr)
+                .set_hl(addr - 1)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into REG A FROM ADDR 0x{:X}, DEC HL", opcode, .a, addr) }
+            }
+
+            // LD (d16), SP
+            0x08u8 => {
+                let addr = .fetch_word(mmu)
+                mmu.write_word(addr, value: .sp)
+                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) FROM SP into ADDR 0x{:X}", opcode, .sp, addr) }
+            }
+
+            // LD SP, d8
+            0xF8u8 => {
+                let a = .sp
+                let b = ((.fetch(mmu) as! i8) as! i16) as! u16
+                .set_flag(Flag::C, value: (a & 0x00FF) + (b & 0x00FF) > 0x00FF)
+                .set_flag(Flag::H, value: (a & 0x000F) + (b & 0x000F) > 0x000F)
+                .set_flag(Flag::N, value: false)
+                .set_flag(Flag::Z, value: false)
+                let ab = wrapping_add_u16(a, b)
+                .set_hl(ab)
+                if .debug { println("[OP 0x{:X}] LOAD SP+D8 into HL", opcode) }
+            }
+
+            0xF9u8 => {
+                .sp = .get_hl()
+                if .debug { println("[OP 0x{:X}] LOAD HL into SP", opcode) }
+            }
+
+            // ld rr,nn
             0x01u8 | 0x11u8 | 0x21u8 | 0x31u8 => { 
                 let value = .fetch_word(mmu)
                 match opcode {
@@ -137,12 +374,24 @@ class CPU {
                     0x21u8 => .set_hl(value)
                     0x31u8 => { 
                         .sp = value
-                        if .debug { println("[OP 0x{:X}] Load value {:X} into SP", opcode, value) }
                     }
                     else => {}
                 }
-                cycles = 12
+                if .debug { println("[OP 0x{:X}] LOAD value ({:X}) into SP", opcode, value) }
             }
+
+            // LD R8, HL
+            0x46u8 | 0x4Eu8 | 0x56u8 | 0x5Eu8 | 0x66u8 | 0x6Eu8 | 0x7Eu8  => .ld_r8_hl(opcode, mmu)
+
+            // LD R8, N8
+            0x06u8 | 0x0Eu8 | 0x16u8 | 0x1Eu8 | 0x26u8 | 0x2Eu8 | 0x3Eu8 => .ld_r8_n8(opcode, mmu)
+
+            // LD R8, R8
+            0x40u8 | 0x41u8 | 0x42u8 | 0x43u8 | 0x44u8 | 0x45u8 | 0x47u8 | 0x48u8 | 0x49u8 | 0x4Au8 | 0x4Bu8 | 0x4Cu8 | 0x4Du8 | 0x4Fu8 => .ld_r8_r8(opcode)
+            0x50u8 | 0x51u8 | 0x52u8 | 0x53u8 | 0x54u8 | 0x55u8 | 0x57u8 | 0x58u8 | 0x59u8 | 0x5Au8 | 0x5Bu8 | 0x5Cu8 | 0x5Du8 | 0x5Fu8 => .ld_r8_r8(opcode)
+            0x60u8 | 0x61u8 | 0x62u8 | 0x63u8 | 0x64u8 | 0x65u8 | 0x67u8 | 0x68u8 | 0x69u8 | 0x6Au8 | 0x6Bu8 | 0x6Cu8 | 0x6Du8 | 0x6Fu8 => .ld_r8_r8(opcode)
+            0x70u8 | 0x71u8 | 0x72u8 | 0x73u8 | 0x74u8 | 0x75u8 | 0x77u8 | 0x78u8 | 0x79u8 | 0x7Au8 | 0x7Bu8 | 0x7Cu8 | 0x7Du8 | 0x7Fu8 => .ld_r8_r8(opcode)
+            // ==========================================================================================================
 
             0x02u8 => {
                 let addr = .get_bc()
@@ -151,8 +400,15 @@ class CPU {
                 if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into ADDR 0x{:x}", opcode, .a, addr) }
             }
 
+            0x03u8 => {
+                let value = .get_bc()
+                .set_bc(wrapping_add_u16(value))
+                cycles = 8
+                if .debug { println("[OP 0x{:X}] INC BC", opcode) }
+            }
+
             0x04u8 => {
-                let value = (.b + 1) & 0xFF
+                let value = wrapping_add_u8(.b)
                 .set_flag(Flag::H, value: (.b & 0x0F) + 0x01 > 0x0F)
                 .set_flag(Flag::N, value: false)
                 .set_flag(Flag::Z, value: value == 0x00)
@@ -169,31 +425,40 @@ class CPU {
                 if .debug { println("[OP 0x{:X}] JUMP to 0x{:X}", opcode, .pc) }
             }
 
-            // ????????????????
-            0x3Eu8 => {
+            0x20u8 | 0x28u8 | 0x30u8 | 0x38u8 => {
+                let cond = match opcode {
+                    0x20u8 => ~.get_flag(Flag::Z)
+                    0x28u8 => .get_flag(Flag::Z)
+                    0x30u8 => ~.get_flag(Flag::C)
+                    0x38u8 => .get_flag(Flag::C)
+                    else => {
+                        eprintln("PANIC AT THE DISCO")
+                        abort()
+                    }
+                }
                 let value = .fetch(mmu)
-                .a = value
                 cycles = 8
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into REG A", opcode, value) }
+                if cond {
+                    cycles = 12
+                    let ni = value as! i8
+                    .pc = (((.pc as! u32) as! i32) + value as! i32) as! u16
+                }
+                if .debug { println("[OP 0x{:X}] JMP to 0x{:X} if {} is true", opcode, .pc, cond) }
             }
 
-            0x59u8 => {
-                let value = .c
-                .e = value
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG C into REG E", opcode, value) }
+            0x23u8 => {
+                let value = wrapping_add_u16(.get_hl())
+                .set_hl(value)
+                cycles = 8
+                if .debug { println("[OP 0x{:X}] INC HL", opcode) }
             }
 
-            0x7Cu8 => {
-                .a = .h
+            0x2Au8 => {
+                let value =.get_hl()
+                .a = mmu.read(addr: value)
+                .set_hl(wrapping_add_u16(value))
                 cycles = 8
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG H into REG A", opcode, .h) }
-            }
-
-            0x7Du8 => {
-                .a = .l
-                cycles = 8
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG L into REG A", opcode, .l) }
+                if .debug { println("[OP 0x{:X}] LOAD value 0x{:X} into A from addr at REG HL, INC HL", opcode, .a) }
             }
 
             0xA3u8 => {
@@ -205,6 +470,31 @@ class CPU {
                 .a = value
                 cycles = 4
                 if .debug { println("[OP 0x{:X}] ALU REG A, E (0x{:X})", opcode, value) }
+            }
+
+            0xB1u8 => {
+                let value = .a | .c
+                .set_flag(Flag::C, value: false)
+                .set_flag(Flag::H, value: false)
+                .set_flag(Flag::N, value: false)
+                .set_flag(Flag::Z, value: value == 0x0)
+                .a = value
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] ALU OR REG A, C", opcode) }
+            }
+
+            // POP
+            0xC1u8 | 0xD1u8 | 0xE1u8 | 0xF1u8 => {
+                let value = .stack_pop(mmu)
+                match opcode {
+                    0xC1u8 => {.set_bc(value)}
+                    0xD1u8 => {.set_de(value)}
+                    0xE1u8 => {.set_hl(value)}
+                    0xF1u8 => {.set_af(value)}
+                    else => {}
+                }
+                cycles = 12
+                if .debug { println("[OP 0x{:X}] POP SP into REG pair", opcode) }
             }
 
             // jp nn
@@ -228,19 +518,28 @@ class CPU {
                 if .debug { println("[OP 0x{:X}] CALL SP 0x{:X}", opcode, .pc) }
             }
 
-            // ld (FF00+n),A
-            0xE0u8 => {
-                let addr = 0xff00u16 | (.fetch(mmu) as! u16)
-                .a = mmu.read(addr)
-                cycles = 12
-                if .debug { println("[OP 0x{:X}] reading val (0x{:X}) from Memory addr: 0x{:X} into REG A", opcode, .a, addr) }
+            0xC5u8 => {
+                .stack_push(mmu, value: .get_bc())
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG BC into SP", opcode, .a, .get_hl()) }
             }
 
-            0xEAu8 => {
-                let addr = .fetch_word(mmu)
-                mmu.write(addr, value: .a)
-                cycles = 16
-                if .debug { println("[OP 0x{:X}] Loading value (0x{:X}) into addr 0x{:X}", opcode, .a, addr) }
+            0xD5u8 => {
+                .stack_push(mmu, value: .get_de())
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG DE into SP", opcode, .a, .get_hl()) }
+            }
+
+            0xE5u8 => {
+                .stack_push(mmu, value: .get_hl())
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG HL into SP", opcode, .a, .get_hl()) }
+            }
+
+            0xF5u8 => {
+                .stack_push(mmu, value: .get_af())
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG AF into SP", opcode, .a, .get_hl()) }
             }
 
             // di
@@ -256,11 +555,9 @@ class CPU {
             }
         }
 
-        guard cycles >= 4 else {
-            eprintln("[OP 0x{:X}] Invalid number of cycles", opcode)
-            abort()
-        }
-
-        return cycles
+        return op_cycles[opcode] * 4
     }
 }
+
+function wrapping_add_u8(anon a: u8, b: u8 = 1u8) -> u8 => (a + b) & 0xFF
+function wrapping_add_u16(anon a: u16, b: u16 = 1u16) -> u16 => (a + b) & 0xFFFF

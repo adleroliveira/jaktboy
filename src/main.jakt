@@ -6,8 +6,9 @@ function main(args: [String]) {
         eprintln("usage: jaktboy <rom file>")
         return -1
     }
-    
+
     let filename = args[1]
     mut system = System::init(filename)
+    system.run()
     // println("{}", system)
 }
