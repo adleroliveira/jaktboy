@@ -1,6 +1,7 @@
 import cartridge { Cartridge }
 import joypad { Joypad }
 import timer { Timer }
+import gpu { GPU }
 
 enum InterruptFlag: u8 {
     VBlank = 0
@@ -25,6 +26,7 @@ class MMU {
     cartridge: Cartridge
     joypad: Joypad
     timer: Timer
+    gpu: GPU
 
     public function init(cartridge: Cartridge) throws -> MMU {
         mut joypad = Joypad::init()
@@ -37,6 +39,7 @@ class MMU {
             cartridge
             joypad
             timer: Timer::init()
+            gpu: GPU::init()
         )
     }
 
@@ -89,6 +92,10 @@ class MMU {
         if addr > 0xFF10 and addr < 0xFF3F {
             println("WARNING: APU Memory Addr Not implemented yet")
             return 0x00
+        }
+
+        if (addr >= 0xFF40 and addr <= 0xFF45) or (addr >= 0xFF47 and addr <= 0xFF4B) or addr == 0xFF4F {
+            return .gpu.read(addr)
         }
 
         if addr == 0xFF70 {

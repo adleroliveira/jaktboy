@@ -17,7 +17,7 @@ class System {
 
     public function run(mut this) throws {
         for i in 0..100 {
-            // cpu.print_debug()
+            .cpu.print_debug()
             print("{}: ", i)
             .cpu.tick(mmu: &mut .mmu)
         }

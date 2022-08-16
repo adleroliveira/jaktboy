@@ -1,0 +1,52 @@
+// class Hdma {
+//     src: u16
+//     dst: u16
+//     remain: u8
+//     active: bool
+
+//     public function init() throws -> Hdma {
+//         return Hdma(
+
+//         )
+//     }
+
+//     public function read(this, addr: u16) -> u8 {
+//         return match addr {
+//             0xFF51u16 => (.src >> 8) as! u8
+//             0xFF52u16 => .src as! u8
+//             0xFF53u16 => (.dst >> 8) as! u8
+//             0xFF54u16 => .dst as! u8
+//             0xFF55u16 => {
+//                 mut result= 0x00u8
+//                 if not .active {
+//                     result = 0x80u8
+//                 }
+//                 yield .remain | result
+//             }
+//             else => {
+//                 eprintln("GPU: MEMORY ACCESS OUT OF BOUND")
+//                 abort()
+//             }
+//         }
+//     }
+// }
+
+class GPU {
+    ly: u8
+
+    public function init() throws -> GPU {
+        return GPU(
+            ly: 0x00u8
+        )
+    }
+
+    public function read(this, addr: u16) -> u8 {
+        return match addr {
+            0xff44u16 => .ly
+            else => {
+                eprintln("GPU: MEMORY ACCESS OUT OF BOUND/NOT IMPLEMENTED ADDR 0x{:X}", addr)
+                abort()
+            }
+        }
+    }
+}
