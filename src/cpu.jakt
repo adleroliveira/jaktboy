@@ -102,6 +102,54 @@ class CPU {
         .l = (value & 0x00FF) as! u8
     }
 
+    function alu_add(mut this, anon n: u8, opcode: u8) {
+        let a = .a
+        let r = wrapping_add_u8(a, n)
+        .set_flag(Flag::C, value: a as! u16 + n as! u16 > 0xFF)
+        .set_flag(Flag::H, value: (a & 0x0F) + (n & 0x0F) > 0x0F)
+        .set_flag(Flag::N, value: false)
+        .set_flag(Flag::Z, value: r == 0x00)
+        .a = r
+        if .debug { println("[OP 0x{:X}] ADD value (0x{:X}) into REG A", opcode, n) }
+    }
+
+    function alu_adc(mut this, anon n: u8, opcode: u8) {
+        let a = .a
+        let c = .get_flag(Flag::C) as! u8
+        let r = wrapping_add_u8(wrapping_add_u8(a, n), c)
+        .set_flag(Flag::C, value: a as! u16 + n as! u16 + c as! u16 > 0xFF)
+        .set_flag(Flag::H, value: (a & 0x0F) + (n & 0x0F) + (c & 0x0F) > 0x0F)
+        .set_flag(Flag::N, value: false)
+        .set_flag(Flag::Z, value: r == 0x00)
+        .a = r
+        if .debug { println("[OP 0x{:X}] ADD value (0x{:X}) + FLAG C (0x{:X}) into REG A", opcode, n, c) }
+    }
+
+    function alu_sub(mut this, anon n: u8, opcode: u8) {
+        let a = .a
+        // FIXME: Use wrapping subtraction here
+        let r = a - n
+        .set_flag(Flag::C, value: (a as! u16) < (n as! u16))
+        .set_flag(Flag::H, value: (a & 0x0F) < (n & 0x0F))
+        .set_flag(Flag::N, value: true)
+        .set_flag(Flag::Z, value: r == 0x00)
+        .a = r
+        if .debug { println("[OP 0x{:X}] SUB value (0x{:X}) from REG A", opcode, n) }
+    }
+
+    function alu_sbc(mut this, anon n: u8, opcode: u8) {
+        let a = .a
+        let c = .get_flag(Flag::C) as! u8
+        // FIXME: Use wrapping subtraction here
+        let r = a - n - c
+        .set_flag(Flag::C, value: (a as! u16) < (n as! u16) + (c as! u16))
+        .set_flag(Flag::H, value: (a & 0x0F) < (n & 0x0F) + c)
+        .set_flag(Flag::N, value: true)
+        .set_flag(Flag::Z, value: r == 0x00)
+        .a = r
+        if .debug { println("[OP 0x{:X}] SUB value (0x{:X}) - FLAG C (0x{:X}) into REG A", opcode, n, c) }
+    }
+
     function fetch(mut this, mmu: &mut MMU) -> u8 {
         let value = mmu.read(addr: .pc)
         .pc += 1
@@ -393,12 +441,100 @@ class CPU {
             0x70u8 | 0x71u8 | 0x72u8 | 0x73u8 | 0x74u8 | 0x75u8 | 0x77u8 | 0x78u8 | 0x79u8 | 0x7Au8 | 0x7Bu8 | 0x7Cu8 | 0x7Du8 | 0x7Fu8 => .ld_r8_r8(opcode)
             // ==========================================================================================================
 
-            0x02u8 => {
-                let addr = .get_bc()
-                mmu.write(addr, value: .a)
-                cycles = 8
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into ADDR 0x{:x}", opcode, .a, addr) }
+            // PUSH
+            // ==========================================================================================================
+            0xC5u8 => {
+                .stack_push(mmu, value: .get_bc())
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG BC into SP", opcode, .a, .get_hl()) }
             }
+
+            0xD5u8 => {
+                .stack_push(mmu, value: .get_de())
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG DE into SP", opcode, .a, .get_hl()) }
+            }
+
+            0xE5u8 => {
+                .stack_push(mmu, value: .get_hl())
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG HL into SP", opcode, .a, .get_hl()) }
+            }
+
+            0xF5u8 => {
+                .stack_push(mmu, value: .get_af())
+                cycles = 4
+                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG AF into SP", opcode, .a, .get_hl()) }
+            }
+            // ==========================================================================================================
+
+            // POP
+            // ==========================================================================================================
+            0xC1u8 | 0xD1u8 | 0xE1u8 | 0xF1u8 => {
+                let value = .stack_pop(mmu)
+                match opcode {
+                    0xC1u8 => {.set_bc(value)}
+                    0xD1u8 => {.set_de(value)}
+                    0xE1u8 => {.set_hl(value)}
+                    0xF1u8 => {.set_af(value)}
+                    else => {}
+                }
+                cycles = 12
+                if .debug { println("[OP 0x{:X}] POP SP into REG pair", opcode) }
+            }
+            // ==========================================================================================================
+
+            // ADD
+            // ==========================================================================================================
+
+            // ADD A, r8/d8
+            0x80u8 => .alu_add(.b, opcode)
+            0x81u8 => .alu_add(.c, opcode)
+            0x82u8 => .alu_add(.d, opcode)
+            0x83u8 => .alu_add(.e, opcode)
+            0x84u8 => .alu_add(.h, opcode)
+            0x85u8 => .alu_add(.l, opcode)
+            0x86u8 => .alu_add(mmu.read(addr: .get_hl()), opcode)
+            0x87u8 => .alu_add(.a, opcode)
+            0xC6u8 => .alu_add(.fetch(mmu), opcode)
+
+            // ADC A, r8/d8
+            0x88u8 => .alu_adc(.b, opcode)
+            0x89u8 => .alu_adc(.c, opcode)
+            0x8Au8 => .alu_adc(.d, opcode)
+            0x8Bu8 => .alu_adc(.e, opcode)
+            0x8Cu8 => .alu_adc(.h, opcode)
+            0x8Du8 => .alu_adc(.l, opcode)
+            0x8Eu8 => .alu_adc(mmu.read(addr: .get_hl()), opcode)
+            0x8Fu8 => .alu_adc(.a, opcode)
+            0xCEu8 => .alu_adc(.fetch(mmu), opcode)
+            // ==========================================================================================================
+
+            // SUB
+            // ==========================================================================================================
+
+            // SUB A, r8/d8
+            0x90u8 => .alu_sub(.b, opcode)
+            0x91u8 => .alu_sub(.c, opcode)
+            0x92u8 => .alu_sub(.d, opcode)
+            0x93u8 => .alu_sub(.e, opcode)
+            0x94u8 => .alu_sub(.h, opcode)
+            0x95u8 => .alu_sub(.l, opcode)
+            0x96u8 => .alu_sub(mmu.read(addr: .get_hl()), opcode)
+            0x97u8 => .alu_sub(.a, opcode)
+            0xD6u8 => .alu_sub(.fetch(mmu), opcode)
+
+            // SBC A, r8/d8
+            0x98u8 => .alu_sbc(.b, opcode)
+            0x99u8 => .alu_sbc(.c, opcode)
+            0x9Au8 => .alu_sbc(.d, opcode)
+            0x9Bu8 => .alu_sbc(.e, opcode)
+            0x9Cu8 => .alu_sbc(.h, opcode)
+            0x9Du8 => .alu_sbc(.l, opcode)
+            0x9Eu8 => .alu_sbc(mmu.read(addr: .get_hl()), opcode)
+            0x9Fu8 => .alu_sbc(.a, opcode)
+            0xDEu8 => .alu_sbc(.fetch(mmu), opcode)
+            // ==========================================================================================================
 
             0x03u8 => {
                 let value = .get_bc()
@@ -483,20 +619,6 @@ class CPU {
                 if .debug { println("[OP 0x{:X}] ALU OR REG A, C", opcode) }
             }
 
-            // POP
-            0xC1u8 | 0xD1u8 | 0xE1u8 | 0xF1u8 => {
-                let value = .stack_pop(mmu)
-                match opcode {
-                    0xC1u8 => {.set_bc(value)}
-                    0xD1u8 => {.set_de(value)}
-                    0xE1u8 => {.set_hl(value)}
-                    0xF1u8 => {.set_af(value)}
-                    else => {}
-                }
-                cycles = 12
-                if .debug { println("[OP 0x{:X}] POP SP into REG pair", opcode) }
-            }
-
             // jp nn
             0xC3u8 => {
                 .pc = .fetch_word(mmu)
@@ -518,30 +640,6 @@ class CPU {
                 if .debug { println("[OP 0x{:X}] CALL SP 0x{:X}", opcode, .pc) }
             }
 
-            0xC5u8 => {
-                .stack_push(mmu, value: .get_bc())
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG BC into SP", opcode, .a, .get_hl()) }
-            }
-
-            0xD5u8 => {
-                .stack_push(mmu, value: .get_de())
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG DE into SP", opcode, .a, .get_hl()) }
-            }
-
-            0xE5u8 => {
-                .stack_push(mmu, value: .get_hl())
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG HL into SP", opcode, .a, .get_hl()) }
-            }
-
-            0xF5u8 => {
-                .stack_push(mmu, value: .get_af())
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG AF into SP", opcode, .a, .get_hl()) }
-            }
-
             // di
             0xF3u8 => {
                 .ei = false
@@ -560,4 +658,5 @@ class CPU {
 }
 
 function wrapping_add_u8(anon a: u8, b: u8 = 1u8) -> u8 => (a + b) & 0xFF
+// function wrapping_sub_u8(anon a: u8, b: u8 = 1u8) -> u8 => (a - b) & 0xFF
 function wrapping_add_u16(anon a: u16, b: u16 = 1u16) -> u16 => (a + b) & 0xFFFF
