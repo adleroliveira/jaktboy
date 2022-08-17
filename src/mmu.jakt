@@ -30,7 +30,7 @@ class MMU {
 
     public function init(cartridge: Cartridge) throws -> MMU {
         mut joypad = Joypad::init()
-        return MMU(
+        mut mmu = MMU(
             wram: [0u8; 0x8000]
             hram: [0u8; 0x7F]
             wram_bank: 0x01
@@ -41,6 +41,13 @@ class MMU {
             timer: Timer::init()
             gpu: GPU::init()
         )
+
+        mmu.write(addr: 0xff05, value: 0x00)
+        mmu.write(addr: 0xff06, value: 0x00)
+        mmu.write(addr: 0xff07, value: 0x00)
+        // mmu.write(addr: 0xff10, value: 0x80)
+        // mmu.write(addr: 0xff11, value: 0xbf)
+        return mmu
     }
 
     public function read_word(this, addr: u16) -> u16 {
@@ -89,7 +96,7 @@ class MMU {
             return .ime.data
         }
 
-        if addr > 0xFF10 and addr < 0xFF3F {
+        if addr >= 0xFF10 and addr <= 0xFF3F {
             println("WARNING: APU Memory Addr Not implemented yet")
             return 0x00
         }
@@ -116,30 +123,38 @@ class MMU {
 
     public function write(mut this, addr: u16, value: u8) {
         // Target: Cartridge
-        if (addr > 0x0000 and addr < 0x7FFF) or (addr > 0xA000 and addr < 0xbFFF) {
+        if (addr >= 0x0000 and addr <= 0x7FFF) or (addr >= 0xA000 and addr <= 0xbFFF) {
             .cartridge.write(addr, value)
 
         // Target: Work Ram (Bank 00)
-        } else if addr > 0xC000 and addr < 0xCFFF {
+        } else if addr >= 0xC000 and addr <= 0xCFFF {
             .wram[addr - 0xC000] = value
 
         // Target: Work Ram (Bank X :: 01 - 07)
-        } else if addr > 0xD000 and addr < 0xDFFF {
+        } else if addr >= 0xD000 and addr <= 0xDFFF {
             .wram[addr - 0xD000 + (0x1000uz * .wram_bank) as! u16] = value
-        } else if addr > 0xE000 and addr < 0xEFFF {
+        } else if addr >= 0xE000 and addr <= 0xEFFF {
             .wram[addr - 0xE000] = value
-        } else if addr > 0xF000 and addr < 0xFDFF {
+        } else if addr >= 0xF000 and addr <= 0xFDFF {
             .wram[addr - 0xF000 + (0x1000uz * .wram_bank) as! u16] = value
-        } else if addr > 0xFEA0 and addr < 0xFEFF {
+        } else if addr >= 0xFEA0 and addr <= 0xFEFF {
             // NOOP region
             println("Something is trying to set values in a noop region")
+        } else if addr >= 0xFF04 and addr <= 0xFF07 {
+            .timer.write(addr, value)
+        } else if addr >= 0xFF10 and addr <= 0xFF3F {
+            println("WARNING: APU Memory Addr Not implemented yet")
         } else if addr == 0xFF70 {
             .wram_bank = match (value & 0x7) as! usize {
                 0uz => 1uz
                 else => (value & 0x7) as! usize
             }
-        } else if addr > 0xFF80 and addr < 0xFFFE {
+        } else if addr == 0xFF0F {
+            .ime.data = value
+        } else if addr >= 0xFF80 and addr < 0xFFFE {
             .hram[addr - 0xFF80] = value
+        } else if addr == 0xFFFF {
+            .ie = value
         } else {
             eprintln("Trying to set value on out of bounds/not implemented memory address {:x}", addr)
             abort()

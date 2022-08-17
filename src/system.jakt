@@ -16,12 +16,12 @@ class System {
     }
 
     public function run(mut this) throws {
-        for i in 0..100 {
+        for i in 0..200 {
             .cpu.print_debug()
             print("{}: ", i)
             .cpu.tick(mmu: &mut .mmu)
         }
         
-        println("END OF 100 instructions")
+        println("END OF 200 instructions")
     }
 }

@@ -31,4 +31,38 @@ struct Timer {
             abort()
         }
     }
+
+    public function write(mut this, addr: u16, value: u8) {
+        match addr {
+            0xFF04u16 => {
+                .registers.div = 0x00
+                .div_clock.n = 0x00
+            }
+            0xFF05u16 => { .registers.tima = value }
+            0xFF06u16 => { .registers.tma = value }
+            0xFF07u16 => { .update_period(value) }
+            else => {
+                eprintln("Unsupported timer address")
+                abort()
+            }
+        }
+    }
+
+    function update_period(mut this, value: u8) {
+        if ((.registers.tac & 0x03) != (value & 0x03)) {
+            .tma_clock.n = 0x00
+            .tma_clock.period = match (value & 0x03) {
+                0x00u8 => 1024u32
+                0x01u8 => 16u32
+                0x02u8 => 64u32
+                0x03u8 => 256u32
+                else => {
+                    eprintln("Timer Panic: Invalid period")
+                    abort()
+                }
+            }
+            .registers.tima = .registers.tma
+        }
+        .registers.tac = value
+    }
 }
