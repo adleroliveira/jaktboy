@@ -939,27 +939,127 @@ class CPU {
             }
             // ==========================================================================================================
 
-            // Return
-            0xC9u8 => {
-                .pc = .stack_pop(mmu)
-                cycles = 16
-                if .debug { println("[OP 0x{:X}] RETURN to {:X}", opcode, .pc) }
-            }
-
+            // CALL
             0xCDu8 => {
                 .stack_push(mmu, value: .pc + 2)
                 .pc = .fetch_word(mmu)
-                cycles = 24
                 if .debug { println("[OP 0x{:X}] CALL SP 0x{:X}", opcode, .pc) }
             }
 
+            // CALL IF
+            0xC4u8 | 0xCCu8 | 0xD4u8 | 0xDCu8 => {
+                let cond = match opcode {
+                    0xC4u8 => not .get_flag(Flag::Z)
+                    0xCCu8 => .get_flag(Flag::Z)
+                    0xD4u8 => not .get_flag(Flag::C)
+                    0xDCu8 => .get_flag(Flag::C)
+                    else => {
+                        eprintln("PANIC: Invalid Code for Call If 0x{:X}", opcode)
+                        abort()
+                    }
+                }
+                let nn = .fetch_word(mmu)
+                if cond {
+                    .stack_push(mmu, value: .pc)
+                    .pc = nn
+                }
+                if .debug { println("[OP 0x{:X}] CALL SP 0x{:X} if {} is true", opcode, nn, cond) }
+            }
+
+            // RST
+            0xC7u8 => {
+                .stack_push(mmu, value: .pc)
+                .pc = 0x00
+                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
+            }
+            0xCFu8 => {
+                .stack_push(mmu, value: .pc)
+                .pc = 0x08
+                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
+            }
+            0xDFu8 => {
+                .stack_push(mmu, value: .pc)
+                .pc = 0x10
+                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
+            }
+            0xE7u8 => {
+                .stack_push(mmu, value: .pc)
+                .pc = 0x18
+                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
+            }
+            0xEFu8 => {
+                .stack_push(mmu, value: .pc)
+                .pc = 0x20
+                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
+            }
+            0xF7u8 => {
+                .stack_push(mmu, value: .pc)
+                .pc = 0x30
+                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
+            }
+            0xFFu8 => {
+                .stack_push(mmu, value: .pc)
+                .pc = 0x38
+                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
+            }
+
+            // RET
+            0xC9u8 => {
+                .pc = .stack_pop(mmu)
+                if .debug { println("[OP 0x{:X}] RETURN to {:X}", opcode, .pc) }
+            }
+
+            // RET IF
+            0xC0u8 | 0xC8u8 | 0xD0u8 | 0xD8u8 => {
+                let cond = match opcode {
+                    0xC0u8 => not .get_flag(Flag::Z)
+                    0xC8u8 => .get_flag(Flag::Z)
+                    0xD0u8 => not .get_flag(Flag::C)
+                    0xD8u8 => .get_flag(Flag::C)
+                    else => {
+                        eprintln("PANIC: Invalid Code for Call If 0x{:X}", opcode)
+                        abort()
+                    }
+                }
+                if cond {
+                    .pc = .stack_pop(mmu)
+                }
+                if .debug { println("[OP 0x{:X}] RETURN to {:X} IF {} is true", opcode, .pc, cond) }
+            }
+
+            // RETI
+            0xD9u8 => {
+                .pc = .stack_pop(mmu)
+                .ei = true
+                if .debug { println("[OP 0x{:X}] RETURN to {:X}, Enable Interrupt", opcode, .pc) }
+            }
+
+            // Extended Bit Operations
+            0xCBu8 => { .extended_bit_operations(mmu, opcode) }
+
+            // Unimplemented OpCodes
+            0xd3u8 => panic_opcode("Opcode 0xd3 is not implemented", opcode)
+            0xdbu8 => panic_opcode("Opcode 0xdb is not implemented", opcode)
+            0xddu8 => panic_opcode("Opcode 0xdd is not implemented", opcode)
+            0xe3u8 => panic_opcode("Opcode 0xe3 is not implemented", opcode)
+            0xe4u8 => panic_opcode("Opcode 0xd4 is not implemented", opcode)
+            0xebu8 => panic_opcode("Opcode 0xeb is not implemented", opcode)
+            0xecu8 => panic_opcode("Opcode 0xec is not implemented", opcode)
+            0xedu8 => panic_opcode("Opcode 0xed is not implemented", opcode)
+            0xf4u8 => panic_opcode("Opcode 0xf4 is not implemented", opcode)
+            0xfcu8 => panic_opcode("Opcode 0xfc is not implemented", opcode)
+            0xfdu8 => panic_opcode("Opcode 0xfd is not implemented", opcode)
+
             else => {
-                eprintln("[OP 0x{:X}] Ilegal/Not Implemented instruction", opcode)
-                abort()
+                panic_opcode("Ilegal/Not Implemented instruction", opcode)
             }
         }
 
         return op_cycles[opcode] * 4
+    }
+
+    function extended_bit_operations(mut this, mmu: &mut MMU, opcode: u8) {
+        panic("EXTENDED BIT OPERATIONS NOT IMPLEMENTED YET")
     }
 }
 
@@ -973,4 +1073,13 @@ function convert_u8_to_i8(anon a: u8) -> i8 {
     } else {
         return a as! i8
     }
+}
+
+function panic_opcode(anon message: String, opcode: u8) throws {
+    panic(format("[OP 0x{:X}] {}", opcode, message))
+}
+
+function panic(anon message: String) {
+    eprintln(message)
+    abort()
 }
