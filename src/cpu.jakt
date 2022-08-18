@@ -267,7 +267,6 @@ class CPU {
         return r
     }
 
-
     function alu_jr(mut this, anon n: u8, opcode) {
         let ni8 = convert_u8_to_i8(n)
         let ni32 = ni8 as! i32
@@ -275,6 +274,66 @@ class CPU {
         let r = pci32 + ni32
         .pc = r as! u16
         println("[OP 0x{:X}] JUMP TO ADDR 0x{:X}", opcode, .pc)
+    }
+
+    function alu_sla(mut this, anon a: u8, opcode) -> u8 {
+        let c = ((a & 0x80) >> 7) == 0x01
+        let r = a << 1
+        .set_flag(Flag::C, value: c)
+        .set_flag(Flag::H, value: false)
+        .set_flag(Flag::N, value: false)
+        .set_flag(Flag::Z, value: r == 0x00)
+        println("[OP 0x{:X}] SHIFT n LEFT into CARRY", opcode)
+        return r
+    }
+
+    function alu_sra(mut this, anon a: u8, opcode) -> u8 {
+        let c = (a & 0x01) == 0x01
+        let r = (a >> 1) | (a & 0x80)
+        .set_flag(Flag::C, value: c)
+        .set_flag(Flag::H, value: false)
+        .set_flag(Flag::N, value: false)
+        .set_flag(Flag::Z, value: r == 0x00)
+        println("[OP 0x{:X}] SHIFT n RIGHT into CARRY, MSB doesn't change", opcode)
+        return r
+    }
+
+    function alu_swap(mut this, anon a: u8, opcode) -> u8 {
+        .set_flag(Flag::C, value: false)
+        .set_flag(Flag::H, value: false)
+        .set_flag(Flag::N, value: false)
+        .set_flag(Flag::Z, value: a == 0x00)
+        println("[OP 0x{:X}] SWAP upper and lower nibles of N", opcode)
+        return (a >> 4) | (a << 4)
+    }
+
+    function alu_srl(mut this, anon a: u8, opcode: u8) -> u8 {
+        let c = (a & 0x01) == 0x01
+        let r = a >> 1
+        .set_flag(Flag::C, value: c)
+        .set_flag(Flag::H, value: false)
+        .set_flag(Flag::N, value: false)
+        .set_flag(Flag::Z, value: r == 0x00)
+        println("[OP 0x{:X}] SHIFT n RIGHT into CARRY, MSB set to 0", opcode)
+        return r
+    }
+
+    function alu_bit(mut this, anon a: u8, anon b: u8, opcode: u8) {
+        let value = (a & (1 << b)) == 0x00
+        .set_flag(Flag::H, value: true)
+        .set_flag(Flag::N, value: false)
+        .set_flag(Flag::Z, value)
+        println("[OP 0x{:X}] TEST BIT in REG", opcode)
+    }
+
+    function alu_res(mut this, anon a: u8, anon b: u8, opcode: u8) -> u8 {
+        println("[OP 0x{:X}] RESET BIT", opcode)
+        return a & not (1 << b)
+    }
+
+    function alu_set(mut this, anon a: u8, anon b: u8, opcode: u8) -> u8 {
+        println("[OP 0x{:X}] SET BIT", opcode)
+        return a | (1 << b)
     }
 
     function fetch(mut this, mmu: &mut MMU) -> u8 {
@@ -401,6 +460,25 @@ class CPU {
             2, 3, 3, 0, 3, 4, 2, 4, 2, 4, 3, 0, 3, 0, 2, 4, // d
             3, 3, 2, 0, 0, 4, 2, 4, 4, 1, 4, 0, 0, 0, 2, 4, // e
             3, 3, 2, 1, 0, 4, 2, 4, 3, 2, 4, 1, 0, 0, 2, 4, // f
+        ]
+
+        let cb_cycles: [i64] = [
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 0
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 1
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 2
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 3
+            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 4
+            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 5
+            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 6
+            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 7
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 8
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 9
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // a
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // b
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // c
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // d
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // e
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // f
         ]
 
         match opcode {
@@ -1055,11 +1133,501 @@ class CPU {
             }
         }
 
-        return op_cycles[opcode] * 4
+        let extra_cycles = match opcode {
+            0x20u8 | 0x30u8 => {
+                mut c: i64 = 0x01
+                if .get_flag(Flag::Z) {
+                    c = 0x00
+                }
+                yield c
+            }
+            0x28u8 | 0x38u8 => {
+                mut c: i64 = 0x00
+                if .get_flag(Flag::Z) {
+                    c = 0x01
+                }
+                yield c
+            }
+            0xC0u8 | 0xD0u8 => {
+                mut c: i64 = 0x03
+                if .get_flag(Flag::Z) {
+                    c = 0x00
+                }
+                yield c
+            }
+            0xC8u8 | 0xCCu8 | 0xD8u8 | 0xDCu8 => {
+                mut c: i64 = 0x00
+                if .get_flag(Flag::Z) {
+                    c = 0x03
+                }
+                yield c
+            }
+            0xC2u8 | 0xD2u8 => {
+                mut c: i64 = 0x01
+                if .get_flag(Flag::Z) {
+                    c = 0x00
+                }
+                yield c
+            }
+            0xCAu8 | 0xDAu8 => {
+                mut c: i64 = 0x00
+                if .get_flag(Flag::Z) {
+                    c = 0x01
+                }
+                yield c
+            }
+            0xC4u8 | 0xD4u8 => {
+                mut c: i64 = 0x03
+                if .get_flag(Flag::Z) {
+                    c = 0x00
+                }
+                yield c
+            }
+            else => 0x00i64
+        }
+
+        if opcode == 0xCBu8 {
+            return cb_cycles[opcode] * 4
+        } else {
+            return (op_cycles[opcode] * 4) + extra_cycles
+        }
     }
 
     function extended_bit_operations(mut this, mmu: &mut MMU, opcode: u8) {
-        panic("EXTENDED BIT OPERATIONS NOT IMPLEMENTED YET")
+        let cb = mmu.read(addr: .pc)
+        .pc += 1
+        match cb {
+            // RLC r8
+            0x00u8 => { .b = .alu_rlc(.b, opcode) }
+            0x01u8 => { .c = .alu_rlc(.c, opcode) }
+            0x02u8 => { .d = .alu_rlc(.d, opcode) }
+            0x03u8 => { .e = .alu_rlc(.e, opcode) }
+            0x04u8 => { .h = .alu_rlc(.h, opcode) }
+            0x05u8 => { .l = .alu_rlc(.l, opcode) }
+            0x06u8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_rlc(v, opcode)
+                mmu.write(addr, value)
+            }
+            0x07u8 => { .a = .alu_rlc(.a, opcode) }
+
+            // RRC r8
+            0x08u8 => { .b = .alu_rrc(.b, opcode) }
+            0x09u8 => { .c = .alu_rrc(.c, opcode) }
+            0x0Au8 => { .d = .alu_rrc(.d, opcode) }
+            0x0Bu8 => { .e = .alu_rrc(.e, opcode) }
+            0x0Cu8 => { .h = .alu_rrc(.h, opcode) }
+            0x0Du8 => { .l = .alu_rrc(.l, opcode) }
+            0x0Eu8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_rrc(v, opcode)
+                mmu.write(addr, value)
+            }
+            0x0Fu8 => { .a = .alu_rrc(.a, opcode) }
+
+            // RL r8
+            0x10u8 => { .b = .alu_rl(.b, opcode) }
+            0x11u8 => { .c = .alu_rl(.c, opcode) }
+            0x12u8 => { .d = .alu_rl(.d, opcode) }
+            0x13u8 => { .e = .alu_rl(.e, opcode) }
+            0x14u8 => { .h = .alu_rl(.h, opcode) }
+            0x15u8 => { .l = .alu_rl(.l, opcode) }
+            0x16u8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_rl(v, opcode)
+                mmu.write(addr, value)
+            }
+            0x17u8 => { .a = .alu_rl(.a, opcode) }
+
+            // RR r8
+            0x18u8 => { .b = .alu_rr(.b, opcode) }
+            0x19u8 => { .c = .alu_rr(.c, opcode) }
+            0x1Au8 => { .d = .alu_rr(.d, opcode) }
+            0x1Bu8 => { .e = .alu_rr(.e, opcode) }
+            0x1Cu8 => { .h = .alu_rr(.h, opcode) }
+            0x1Du8 => { .l = .alu_rr(.l, opcode) }
+            0x1Eu8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_rr(v, opcode)
+                mmu.write(addr, value)
+            }
+            0x1Fu8 => { .a = .alu_rr(.a, opcode) }
+
+            // SLA r8
+            0x20u8 => { .b = .alu_sla(.b, opcode) }
+            0x21u8 => { .c = .alu_sla(.c, opcode) }
+            0x22u8 => { .d = .alu_sla(.d, opcode) }
+            0x23u8 => { .e = .alu_sla(.e, opcode) }
+            0x24u8 => { .h = .alu_sla(.h, opcode) }
+            0x25u8 => { .l = .alu_sla(.l, opcode) }
+            0x26u8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_sla(v, opcode)
+                mmu.write(addr, value)
+            }
+            0x27u8 => { .a = .alu_sla(.a, opcode) }
+
+            // SRA r8
+            0x28u8 => { .b = .alu_sra(.b, opcode) }
+            0x29u8 => { .c = .alu_sra(.c, opcode) }
+            0x2Au8 => { .d = .alu_sra(.d, opcode) }
+            0x2Bu8 => { .e = .alu_sra(.e, opcode) }
+            0x2Cu8 => { .h = .alu_sra(.h, opcode) }
+            0x2Du8 => { .l = .alu_sra(.l, opcode) }
+            0x2Eu8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_sra(v, opcode)
+                mmu.write(addr, value)
+            }
+            0x2Fu8 => { .a = .alu_sra(.a, opcode) }
+
+            // SWAP r8
+            0x30u8 => { .b = .alu_swap(.b, opcode) }
+            0x31u8 => { .c = .alu_swap(.c, opcode) }
+            0x32u8 => { .d = .alu_swap(.d, opcode) }
+            0x33u8 => { .e = .alu_swap(.e, opcode) }
+            0x34u8 => { .h = .alu_swap(.h, opcode) }
+            0x35u8 => { .l = .alu_swap(.l, opcode) }
+            0x36u8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_swap(v, opcode)
+                mmu.write(addr, value)
+            }
+            0x37u8 => { .a = .alu_swap(.a, opcode) }
+
+            // SRL r8
+            0x38u8 => { .b = .alu_srl(.b, opcode) }
+            0x39u8 => { .c = .alu_srl(.c, opcode) }
+            0x3Au8 => { .d = .alu_srl(.d, opcode) }
+            0x3Bu8 => { .e = .alu_srl(.e, opcode) }
+            0x3Cu8 => { .h = .alu_srl(.h, opcode) }
+            0x3Du8 => { .l = .alu_srl(.l, opcode) }
+            0x3Eu8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_srl(v, opcode)
+                mmu.write(addr, value)
+            }
+            0x3Fu8 => { .a = .alu_srl(.a, opcode) }
+
+            // BIT b, r8
+            0x40u8 => { .alu_bit(.b, 0, opcode) }
+            0x41u8 => { .alu_bit(.c, 0, opcode) }
+            0x42u8 => { .alu_bit(.d, 0, opcode) }
+            0x43u8 => { .alu_bit(.e, 0, opcode) }
+            0x44u8 => { .alu_bit(.h, 0, opcode) }
+            0x45u8 => { .alu_bit(.l, 0, opcode) }
+            0x46u8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                .alu_bit(v, 0, opcode)
+            }
+            0x47u8 => { .alu_bit(.a, 0, opcode) }
+            0x48u8 => { .alu_bit(.b, 1, opcode) }
+            0x49u8 => { .alu_bit(.c, 1, opcode) }
+            0x4Au8 => { .alu_bit(.d, 1, opcode) }
+            0x4Bu8 => { .alu_bit(.e, 1, opcode) }
+            0x4Cu8 => { .alu_bit(.h, 1, opcode) }
+            0x4Du8 => { .alu_bit(.l, 1, opcode) }
+            0x4Eu8 => {
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                .alu_bit(v, 1, opcode)
+            }
+            0x4Fu8 => { .alu_bit(.a, 1, opcode) }
+            0x50u8 => { .alu_bit(.b, 2, opcode) }
+            0x51u8 => { .alu_bit(.c, 2, opcode) }
+            0x52u8 => { .alu_bit(.d, 2, opcode) }
+            0x53u8 => { .alu_bit(.e, 2, opcode) }
+            0x54u8 => { .alu_bit(.h, 2, opcode) }
+            0x55u8 => { .alu_bit(.l, 2, opcode) }
+            0x56u8 => {
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                .alu_bit(v, 2, opcode)
+            }
+            0x57u8 => { .alu_bit(.a, 2, opcode) }
+            0x58u8 => { .alu_bit(.b, 3, opcode) }
+            0x59u8 => { .alu_bit(.c, 3, opcode) }
+            0x5Au8 => { .alu_bit(.d, 3, opcode) }
+            0x5Bu8 => { .alu_bit(.e, 3, opcode) }
+            0x5Cu8 => { .alu_bit(.h, 3, opcode) }
+            0x5Du8 => { .alu_bit(.l, 3, opcode) }
+            0x5Eu8 => {
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                .alu_bit(v, 3, opcode)
+            }
+            0x5Fu8 => { .alu_bit(.a, 3, opcode) }
+            0x60u8 => { .alu_bit(.b, 4, opcode) }
+            0x61u8 => { .alu_bit(.c, 4, opcode) }
+            0x62u8 => { .alu_bit(.d, 4, opcode) }
+            0x63u8 => { .alu_bit(.e, 4, opcode) }
+            0x64u8 => { .alu_bit(.h, 4, opcode) }
+            0x65u8 => { .alu_bit(.l, 4, opcode) }
+            0x66u8 => {
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                .alu_bit(v, 4, opcode)
+            }
+            0x67u8 => { .alu_bit(.a, 4, opcode) }
+            0x68u8 => { .alu_bit(.b, 5, opcode) }
+            0x69u8 => { .alu_bit(.c, 5, opcode) }
+            0x6Au8 => { .alu_bit(.d, 5, opcode) }
+            0x6Bu8 => { .alu_bit(.e, 5, opcode) }
+            0x6Cu8 => { .alu_bit(.h, 5, opcode) }
+            0x6Du8 => { .alu_bit(.l, 5, opcode) }
+            0x6Eu8 => {
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                .alu_bit(v, 5, opcode)
+            }
+            0x6Fu8 => { .alu_bit(.a, 5, opcode) }
+            0x70u8 => { .alu_bit(.b, 6, opcode) }
+            0x71u8 => { .alu_bit(.c, 6, opcode) }
+            0x72u8 => { .alu_bit(.d, 6, opcode) }
+            0x73u8 => { .alu_bit(.e, 6, opcode) }
+            0x74u8 => { .alu_bit(.h, 6, opcode) }
+            0x75u8 => { .alu_bit(.l, 6, opcode) }
+            0x76u8 => {
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                .alu_bit(v, 6, opcode)
+            }
+            0x77u8 => { .alu_bit(.a, 6, opcode) }
+            0x78u8 => { .alu_bit(.b, 7, opcode) }
+            0x79u8 => { .alu_bit(.c, 7, opcode) }
+            0x7Au8 => { .alu_bit(.d, 7, opcode) }
+            0x7Bu8 => { .alu_bit(.e, 7, opcode) }
+            0x7Cu8 => { .alu_bit(.h, 7, opcode) }
+            0x7Du8 => { .alu_bit(.l, 7, opcode) }
+            0x7Eu8 => {
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                .alu_bit(v, 7, opcode)
+            }
+            0x7Fu8 => { .alu_bit(.a, 7, opcode) }
+
+            // RES b, r8
+            0x80u8 => { .b = .alu_res(.b, 0, opcode) }
+            0x81u8 => { .c = .alu_res(.c, 0, opcode) }
+            0x82u8 => { .d = .alu_res(.d, 0, opcode) }
+            0x83u8 => { .e = .alu_res(.e, 0, opcode) }
+            0x84u8 => { .h = .alu_res(.h, 0, opcode) }
+            0x85u8 => { .l = .alu_res(.l, 0, opcode) }
+            0x86u8 => {
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_res(v, 0, opcode)
+                mmu.write(addr, value)
+            }
+            0x87u8 => { .a = .alu_res(.a, 0, opcode) }
+            0x88u8 => { .b = .alu_res(.b, 1, opcode) }
+            0x89u8 => { .c = .alu_res(.c, 1, opcode) }
+            0x8Au8 => { .d = .alu_res(.d, 1, opcode) }
+            0x8Bu8 => { .e = .alu_res(.e, 1, opcode) } 
+            0x8Cu8 => { .h = .alu_res(.h, 1, opcode) }
+            0x8Du8 => { .l = .alu_res(.l, 1, opcode) }
+            0x8Eu8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_res(v, 1, opcode)
+                mmu.write(addr, value)
+            }
+            0x8Fu8 => { .a = .alu_res(.a, 1, opcode) }
+            0x90u8 => { .b = .alu_res(.b, 2, opcode) }
+            0x91u8 => { .c = .alu_res(.c, 2, opcode) }
+            0x92u8 => { .d = .alu_res(.d, 2, opcode) }
+            0x93u8 => { .e = .alu_res(.e, 2, opcode) }
+            0x94u8 => { .h = .alu_res(.h, 2, opcode) }
+            0x95u8 => { .l = .alu_res(.l, 2, opcode) }
+            0x96u8 => { 
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_res(v, 2, opcode)
+                mmu.write(addr, value)
+            }
+            0x97u8 => { .a = .alu_res(.a, 2, opcode) }
+            0x98u8 => { .b = .alu_res(.b, 3, opcode) }
+            0x99u8 => { .c = .alu_res(.c, 3, opcode) }
+            0x9Au8 => { .d = .alu_res(.d, 3, opcode) }
+            0x9Bu8 => { .e = .alu_res(.e, 3, opcode) }
+            0x9Cu8 => { .h = .alu_res(.h, 3, opcode) }
+            0x9Du8 => { .l = .alu_res(.l, 3, opcode) }
+            0x9Eu8 => {  
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_res(v, 3, opcode)
+                mmu.write(addr, value)
+            }
+            0x9Fu8 => { .a = .alu_res(.a, 3, opcode) }
+            0xA0u8 => { .b = .alu_res(.b, 4, opcode) }
+            0xA1u8 => { .c = .alu_res(.c, 4, opcode) }
+            0xA2u8 => { .d = .alu_res(.d, 4, opcode) }
+            0xA3u8 => { .e = .alu_res(.e, 4, opcode) }
+            0xA4u8 => { .h = .alu_res(.h, 4, opcode) }
+            0xA5u8 => { .l = .alu_res(.l, 4, opcode) }
+            0xA6u8 => {  
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_res(v, 4, opcode)
+                mmu.write(addr, value)
+            }
+            0xA7u8 => { .a = .alu_res(.a, 4, opcode) }
+            0xA8u8 => { .b = .alu_res(.b, 5, opcode) }
+            0xA9u8 => { .c = .alu_res(.c, 5, opcode) }
+            0xAAu8 => { .d = .alu_res(.d, 5, opcode) }
+            0xABu8 => { .e = .alu_res(.e, 5, opcode) }
+            0xACu8 => { .h = .alu_res(.h, 5, opcode) }
+            0xADu8 => { .l = .alu_res(.l, 5, opcode) }
+            0xAEu8 => {  
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_res(v, 5, opcode)
+                mmu.write(addr, value)
+            }
+            0xAFu8 => { .a = .alu_res(.a, 5, opcode) }
+            0xB0u8 => { .b = .alu_res(.b, 6, opcode) }
+            0xB1u8 => { .c = .alu_res(.c, 6, opcode) }
+            0xB2u8 => { .d = .alu_res(.d, 6, opcode) }
+            0xB3u8 => { .e = .alu_res(.e, 6, opcode) }
+            0xB4u8 => { .h = .alu_res(.h, 6, opcode) }
+            0xB5u8 => { .l = .alu_res(.l, 6, opcode) }
+            0xB6u8 => {  
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_res(v, 6, opcode)
+                mmu.write(addr, value)
+            }
+            0xB7u8 => { .a = .alu_res(.a, 6, opcode) }
+            0xB8u8 => { .b = .alu_res(.b, 7, opcode) }
+            0xB9u8 => { .c = .alu_res(.c, 7, opcode) }
+            0xBAu8 => { .d = .alu_res(.d, 7, opcode) }
+            0xBBu8 => { .e = .alu_res(.e, 7, opcode) }
+            0xBCu8 => { .h = .alu_res(.h, 7, opcode) }
+            0xBDu8 => { .l = .alu_res(.l, 7, opcode) }
+            0xBEu8 => {  
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_res(v, 7, opcode)
+                mmu.write(addr, value)
+            }
+            0xBFu8 => { .a = .alu_res(.a, 7, opcode) }
+
+            // SET b, r8
+            0xC0u8 => { .b = .alu_set(.b, 0, opcode) }
+            0xC1u8 => { .c = .alu_set(.c, 0, opcode) }
+            0xC2u8 => { .d = .alu_set(.d, 0, opcode) }
+            0xC3u8 => { .e = .alu_set(.e, 0, opcode) }
+            0xC4u8 => { .h = .alu_set(.h, 0, opcode) }
+            0xC5u8 => { .l = .alu_set(.l, 0, opcode) }
+            0xC6u8 => {  
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_set(v, 0, opcode)
+                mmu.write(addr, value)
+            }
+            0xC7u8 => { .a = .alu_set(.a, 0, opcode) }
+            0xC8u8 => { .b = .alu_set(.b, 1, opcode) }
+            0xC9u8 => { .c = .alu_set(.c, 1, opcode) }
+            0xCAu8 => { .d = .alu_set(.d, 1, opcode) }
+            0xCBu8 => { .e = .alu_set(.e, 1, opcode) }
+            0xCCu8 => { .h = .alu_set(.h, 1, opcode) }
+            0xCDu8 => { .l = .alu_set(.l, 1, opcode) }
+            0xCEu8 => {  
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_set(v, 1, opcode)
+                mmu.write(addr, value)
+            }
+            0xCFu8 => { .a = .alu_set(.a, 1, opcode) }
+            0xD0u8 => { .b = .alu_set(.b, 2, opcode) }
+            0xD1u8 => { .c = .alu_set(.c, 2, opcode) }
+            0xD2u8 => { .d = .alu_set(.d, 2, opcode) }
+            0xD3u8 => { .e = .alu_set(.e, 2, opcode) }
+            0xD4u8 => { .h = .alu_set(.h, 2, opcode) }
+            0xD5u8 => { .l = .alu_set(.l, 2, opcode) }
+            0xD6u8 => {   
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_set(v, 2, opcode)
+                mmu.write(addr, value)
+            }
+            0xD7u8 => { .a = .alu_set(.a, 2, opcode) }
+            0xD8u8 => { .b = .alu_set(.b, 3, opcode) }
+            0xD9u8 => { .c = .alu_set(.c, 3, opcode) }
+            0xDAu8 => { .d = .alu_set(.d, 3, opcode) }
+            0xDBu8 => { .e = .alu_set(.e, 3, opcode) }
+            0xDCu8 => { .h = .alu_set(.h, 3, opcode) }
+            0xDDu8 => { .l = .alu_set(.l, 3, opcode) }
+            0xDEu8 => {    
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_set(v, 3, opcode)
+                mmu.write(addr, value)
+            }
+            0xDFu8 => { .a = .alu_set(.a, 3, opcode) }
+            0xE0u8 => { .b = .alu_set(.b, 4, opcode) }
+            0xE1u8 => { .c = .alu_set(.c, 4, opcode) }
+            0xE2u8 => { .d = .alu_set(.d, 4, opcode) }
+            0xE3u8 => { .e = .alu_set(.e, 4, opcode) }
+            0xE4u8 => { .h = .alu_set(.h, 4, opcode) }
+            0xE5u8 => { .l = .alu_set(.l, 4, opcode) }
+            0xE6u8 => {    
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_set(v, 4, opcode)
+                mmu.write(addr, value)
+            }
+            0xE7u8 => { .a = .alu_set(.a, 4, opcode) }
+            0xE8u8 => { .b = .alu_set(.b, 5, opcode) }
+            0xE9u8 => { .c = .alu_set(.c, 5, opcode) }
+            0xEAu8 => { .d = .alu_set(.d, 5, opcode) }
+            0xEBu8 => { .e = .alu_set(.e, 5, opcode) }
+            0xECu8 => { .h = .alu_set(.h, 5, opcode) }
+            0xEDu8 => { .l = .alu_set(.l, 5, opcode) }
+            0xEEu8 => {    
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_set(v, 5, opcode)
+                mmu.write(addr, value)
+            }
+            0xEFu8 => { .a = .alu_set(.a, 5, opcode) }
+            0xF0u8 => { .b = .alu_set(.b, 6, opcode) }
+            0xF1u8 => { .c = .alu_set(.c, 6, opcode) }
+            0xF2u8 => { .d = .alu_set(.d, 6, opcode) }
+            0xF3u8 => { .e = .alu_set(.e, 6, opcode) }
+            0xF4u8 => { .h = .alu_set(.h, 6, opcode) }
+            0xF5u8 => { .l = .alu_set(.l, 6, opcode) }
+            0xF6u8 => {     
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_set(v, 6, opcode)
+                mmu.write(addr, value)
+            }
+            0xF7u8 => { .a = .alu_set(.a, 6, opcode) }
+            0xF8u8 => { .b = .alu_set(.b, 7, opcode) }
+            0xF9u8 => { .c = .alu_set(.c, 7, opcode) }
+            0xFAu8 => { .d = .alu_set(.d, 7, opcode) }
+            0xFBu8 => { .e = .alu_set(.e, 7, opcode) }
+            0xFCu8 => { .h = .alu_set(.h, 7, opcode) }
+            0xFDu8 => { .l = .alu_set(.l, 7, opcode) }
+            0xFEu8 => {     
+                let addr = .get_hl()
+                let v = mmu.read(addr)
+                let value = .alu_set(v, 7, opcode)
+                mmu.write(addr, value)
+             }
+            0xFFu8 => { .a = .alu_set(.a, 7, opcode) }
+            else => { panic("Unreacheable") }
+        }
     }
 }
 
