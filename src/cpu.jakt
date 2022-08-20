@@ -24,12 +24,15 @@ class CPU {
     h: u8
     l: u8
     sp: u16 // Stack Pointer
-    pc: u16 // Program Counter
+    public pc: u16 // Program Counter
     ei: bool // Enable Interrupt Flag
-    halted: bool
+    public halted: bool
+    public ticks: i64
     debug: bool
+    debug_message: String
 
     public function init(terminal: Terminal, debug: bool = false) throws -> CPU {
+        mut s = StringBuilder::create()
         return CPU(
             a: match terminal {
                 GB => 0x01
@@ -44,19 +47,114 @@ class CPU {
             f: 0xB0
             h: 0x01
             l: 0x4D
-            sp: 0xFFFe
+            sp: 0xFFFE
             pc: 0x0100
             ei: true
             halted: false
+            ticks: 0
             debug
+            debug_message: ""
         )
     }
 
-    public function print_debug(this) {
-        println("===========================================================================================")
-        println("A: 0x{:X}, B: 0x{:X}, C: 0x{:X}, D: 0x{:X}, E: 0x{:X}, F: 0x{:X}, H: 0x{:X}, L: 0x{:X}", .a, .b, .c, .d, .e, .f, .h, .l)
-        println("PC: 0x{:X}, SP: 0x{:X}, fZ: {:X}, fN: {:X}, fH: {:X}, fC: {:X}", .pc, .sp, .get_flag(Flag::Z), .get_flag(Flag::N), .get_flag(Flag::H), .get_flag(Flag::C))
-        println("===========================================================================================")
+    public function print_debug_info(mut this, opcode: u8, mmu: &mut MMU) throws {
+        mut flags = ""
+        if .get_flag(Flag::Z) {
+            flags += "Z"
+        } else {
+            flags += "-"
+        }
+        if .get_flag(Flag::N) {
+            flags += "N"
+        } else {
+            flags += "-"
+        }
+        if .get_flag(Flag::H) {
+            flags += "H"
+        } else {
+            flags += "-"
+        }
+        if .get_flag(Flag::C) {
+            flags += "C"
+        } else {
+            flags += "-"
+        }
+        println("{:0>8X} - {:04X}: ({:02X} {:02X} {:02X}) A: {:02X} F: {} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X}", .ticks, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), .a, flags, .b, .c, .d, .e, .h, .l, .sp)
+        if mmu.serial_data1 == 0x81 {
+            mut s = StringBuilder::create()
+            s.append(mmu.serial_data0)
+            .debug_message += s.to_string()
+            mmu.write(addr: 0xFF02, value: 0x0)
+        }
+
+        if .debug_message != "" {
+            println("DBG: {}", .debug_message)
+        }
+    }
+
+    function fetch(mut this, mmu: &mut MMU) throws -> u8 {
+        let opcode = mmu.read(addr: .pc)
+        .pc += 1
+        return opcode
+    }
+
+    function fetch_word(mut this, mmu: &mut MMU) -> u16 {
+        let word = mmu.read_word(addr: .pc)
+        .pc += 2
+        return word
+    }
+
+    function stack_push(mut this, mmu: &mut MMU, value: u16) {
+        .sp -= 2
+        mmu.write_word(addr: .sp, value)
+    }
+
+    function stack_pop(mut this, mmu: &mut MMU) -> u16{
+        let result = mmu.read_word(addr: .sp)
+        .sp += 2
+        return result
+    }
+
+    function handle_interrupts(mut this, mmu: &mut MMU) -> u32 {
+        if not .halted and not .ei {
+            return 0
+        }
+
+        let intf = mmu.read(addr: 0xFF0F)
+        let inte = mmu.read(addr: 0xFFFF)
+        let ii = intf & inte
+        if ii == 0x00 {
+            return 0
+        }
+
+        .halted = false
+        if not .ei {
+            return 0
+        }
+        println("INTERRUPT MIDDLE")
+        .ei = false
+        let n = trailing_zeros(ii)
+        let int_flag = intf & not(1 << n)
+        mmu.write(addr: 0xFF0F, value: int_flag)
+        .stack_push(mmu, value: .pc)
+        .pc = 0x0040u16 | ((n as! u16) << 3)
+        return 4
+    }
+
+    public function tick(mut this, mmu: &mut MMU) throws -> u32 {
+        mut cycles: u32 = 0
+        let c = .handle_interrupts(mmu)
+        
+        if c != 0 {
+            println("INTERRRRRRRRRRRRRRRRRRUP")
+            cycles = c
+        } else if .halted {
+            cycles = 1
+        } else {
+            cycles = .execute(mmu)
+        }
+        
+        return cycles * 4
     }
 
     function set_flag(mut this, anon flag: Flag, value: bool) {
@@ -73,20 +171,11 @@ class CPU {
     function get_de(this) -> u16 => (.d as! u16) << 8 | .e
     function get_hl(this) -> u16 => (.h as! u16) << 8 | .l
 
-    function stack_push(mut this, mmu: &mut MMU, value: u16) {
-        .sp -= 2
-        mmu.write_word(addr: .sp, value)
-    }
-
-    function stack_pop(mut this, mmu: &mut MMU) -> u16{
-        let result = mmu.read_word(addr: .sp)
-        .sp += 2
-        return result
-    }
-
     function set_af(mut this, anon value: u16) {
         .a = (value >> 8) as! u8
-        .f = (value & 0x00FF) as! u8
+        let f = ((value & 0x00FF) as! u8) & 0xF0
+        println("POP AF 0x{:X}, F: 0x{:X}, New F: 0x{:X}", value, .f, f)
+        .f = f
     }
 
     function set_bc(mut this, anon value: u16) {
@@ -112,7 +201,6 @@ class CPU {
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
         .a = r
-        if .debug { println("[OP 0x{:X}] ADD value (0x{:X}) into REG A", opcode, n) }
     }
 
     function alu_adc(mut this, anon n: u8, opcode: u8) {
@@ -124,7 +212,6 @@ class CPU {
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
         .a = r
-        if .debug { println("[OP 0x{:X}] ADD value (0x{:X}) + FLAG C (0x{:X}) into REG A", opcode, n, c) }
     }
 
     function alu_sub(mut this, anon n: u8, opcode: u8) {
@@ -135,7 +222,6 @@ class CPU {
         .set_flag(Flag::N, value: true)
         .set_flag(Flag::Z, value: r == 0x00u8)
         .a = r
-        if .debug { println("[OP 0x{:X}] SUB value (0x{:X}) from REG A, result (0x{:X})", opcode, n, r) }
     }
 
     function alu_sbc(mut this, anon n: u8, opcode: u8) {
@@ -147,7 +233,6 @@ class CPU {
         .set_flag(Flag::N, value: true)
         .set_flag(Flag::Z, value: r == 0x00)
         .a = r
-        if .debug { println("[OP 0x{:X}] SUB value (0x{:X}) - FLAG C (0x{:X}) into REG A", opcode, n, c) }
     }
 
     function alu_and(mut this, anon n: u8, opcode: u8) {
@@ -157,7 +242,6 @@ class CPU {
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
         .a = r
-        if .debug { println("[OP 0x{:X}] AND value (0x{:X}), REG A", opcode, n) }
     }
 
     function alu_or(mut this, anon n: u8, opcode: u8) {
@@ -167,7 +251,6 @@ class CPU {
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
         .a = r
-        if .debug { println("[OP 0x{:X}] OR value (0x{:X}), REG A", opcode, n) }
     }
 
     function alu_xor(mut this, anon n: u8, opcode: u8) {
@@ -177,33 +260,29 @@ class CPU {
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
         .a = r
-        if .debug { println("[OP 0x{:X}] XOR value (0x{:X}), REG A", opcode, n) }
     }
 
     function alu_cp(mut this, anon n: u8, opcode: u8) {
         let r = .a
         .alu_sub(n, opcode)
         .a = r
-        if .debug { println("[OP 0x{:X}] COMPARE value (0x{:X}), REG A", opcode, n) }
     }
 
-    function alu_inc(mut this, anon n: u8, opcode: u8) throws -> u8 {
+    function alu_inc(mut this, anon a: u8, opcode: u8) throws -> u8 {
         let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
-        let r = wrapping_add_u8(.a, n)
-        .set_flag(Flag::H, value: (.a & 0x0F) + 0x01 > 0x0F)
+        let r = wrapping_add_u8(a, 1)
+        .set_flag(Flag::H, value: (a & 0x0F) + 0x01 > 0x0F)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
-        if .debug { println("[OP 0x{:X}] INC REG {}", opcode, regname[opcode & 7]) }
         return r
     }
 
-    function alu_dec(mut this, anon n: u8, opcode: u8) throws -> u8 {
+    function alu_dec(mut this, anon a: u8, opcode: u8) throws -> u8 {
         let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
-        let r = wrapping_sub_u8(.a, 1)
-        .set_flag(Flag::H, value: (r & 0xF) == 0xF)
+        let r = wrapping_sub_u8(a, 1)
+        .set_flag(Flag::H, value: trailing_zeros(a) >= 4)
         .set_flag(Flag::N, value: true)
         .set_flag(Flag::Z, value: r == 0x00)
-        if .debug { println("[OP 0x{:X}] DEC REG {}", opcode, regname[opcode & 7]) }
         return r
     }
 
@@ -214,7 +293,6 @@ class CPU {
         .set_flag(Flag::H, value: (a & 0x0FFFu16) + (n & 0x0FFFu16) > 0x0FFFu16)
         .set_flag(Flag::N, value: false)
         .set_hl(value: r)
-        if .debug { println("[OP 0x{:X}] ADD value (0x{:X}) to REG HL", opcode, r) }
     }
 
     function alu_rlc(mut this, anon a: u8, opcode: u8) -> u8 {
@@ -224,7 +302,6 @@ class CPU {
         .set_flag(Flag::H, value: false)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
-        if .debug { println("[OP 0x{:X}] ROTATE left", opcode) }
         return r
     }
 
@@ -235,7 +312,6 @@ class CPU {
         .set_flag(Flag::H, value: false)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
-        if .debug { println("[OP 0x{:X}] ROTATE left through Carry Flag", opcode) }
         return r
     }
 
@@ -249,7 +325,6 @@ class CPU {
         .set_flag(Flag::H, value: false)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
-        if .debug { println("[OP 0x{:X}] ROTATE left through Carry Flag", opcode) }
         return r
     }
 
@@ -263,7 +338,6 @@ class CPU {
         .set_flag(Flag::H, value: false)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
-        if .debug { println("[OP 0x{:X}] ROTATE left through Carry Flag", opcode) }
         return r
     }
 
@@ -273,7 +347,6 @@ class CPU {
         let pci32 = (.pc as! u32) as! i32
         let r = pci32 + ni32
         .pc = r as! u16
-        println("[OP 0x{:X}] JUMP TO ADDR 0x{:X}", opcode, .pc)
     }
 
     function alu_sla(mut this, anon a: u8, opcode) -> u8 {
@@ -283,7 +356,6 @@ class CPU {
         .set_flag(Flag::H, value: false)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
-        println("[OP 0x{:X}] SHIFT n LEFT into CARRY", opcode)
         return r
     }
 
@@ -294,7 +366,6 @@ class CPU {
         .set_flag(Flag::H, value: false)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
-        println("[OP 0x{:X}] SHIFT n RIGHT into CARRY, MSB doesn't change", opcode)
         return r
     }
 
@@ -303,7 +374,6 @@ class CPU {
         .set_flag(Flag::H, value: false)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: a == 0x00)
-        println("[OP 0x{:X}] SWAP upper and lower nibles of N", opcode)
         return (a >> 4) | (a << 4)
     }
 
@@ -314,7 +384,6 @@ class CPU {
         .set_flag(Flag::H, value: false)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value: r == 0x00)
-        println("[OP 0x{:X}] SHIFT n RIGHT into CARRY, MSB set to 0", opcode)
         return r
     }
 
@@ -323,34 +392,14 @@ class CPU {
         .set_flag(Flag::H, value: true)
         .set_flag(Flag::N, value: false)
         .set_flag(Flag::Z, value)
-        println("[OP 0x{:X}] TEST BIT in REG", opcode)
     }
 
     function alu_res(mut this, anon a: u8, anon b: u8, opcode: u8) -> u8 {
-        println("[OP 0x{:X}] RESET BIT", opcode)
         return a & not (1 << b)
     }
 
     function alu_set(mut this, anon a: u8, anon b: u8, opcode: u8) -> u8 {
-        println("[OP 0x{:X}] SET BIT", opcode)
         return a | (1 << b)
-    }
-
-    function fetch(mut this, mmu: &mut MMU) -> u8 {
-        let value = mmu.read(addr: .pc)
-        .pc += 1
-        return value
-    }
-
-    function fetch_word(mut this, mmu: &mut MMU) -> u16 {
-        let word = mmu.read_word(addr: .pc)
-        .pc += 2
-        return word
-    }
-
-    public function tick(mut this, mmu: &mut MMU) throws {
-        let opcode = .fetch(mmu)
-        let cycles = .execute(mmu, opcode)
     }
 
     function ld_r8_n8(mut this, anon opcode: u8, mmu: &mut MMU) throws {
@@ -364,11 +413,11 @@ class CPU {
             5u8 => { .l = .fetch(mmu) }
             7u8 => { .a = .fetch(mmu) }
             else => {
-                eprintln("Error decoding REG from opcode (ld_r8_n8)")
+                eprintln("Error decoding REG from opcode (ld_r8_n8) 0x{:X}", opcode)
                 abort()
             }
         }
-        if .debug { println("[OP 0x{:X}] LOAD immediate value to REG {}", opcode, regname[(opcode >> 3) & 7]) }
+        // println("[OP 0x{:X}] LOAD immediate value to REG {}", opcode, regname[(opcode >> 3) & 7])
     }
 
     function ld_r8_hl(mut this, anon opcode: u8, mmu: &mut MMU) throws {
@@ -386,7 +435,6 @@ class CPU {
                 abort()
             }
         }
-        if .debug { println("[OP 0x{:X}] LOAD value from ADDR in HL (0x{:X}) into REG {}", opcode, .get_hl(), regname[(opcode >> 3) & 7]) }
     }
 
     function ld_hl_r8(mut this, anon opcode: u8, mmu: &mut MMU) throws {
@@ -400,12 +448,11 @@ class CPU {
             5u8 => .l
             7u8 => .a
             else => {
-                eprintln("Error decoding REG from opcode (ld_r8_r8)")
+                eprintln("Error decoding REG from opcode (ld_hl_r8) 0x{:X}", opcode)
                 abort()
             }
         }
         mmu.write(addr: .get_hl(), value)
-        if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG {} into REG {}", opcode, value, regname[opcode & 7], regname[(opcode >> 3) & 7]) }
     }
 
     function ld_r8_r8(mut this, anon opcode: u8) throws {
@@ -419,7 +466,7 @@ class CPU {
             5u8 => .l
             7u8 => .a
             else => {
-                eprintln("Error decoding REG from opcode (ld_r8_r8)")
+                eprintln("Error decoding REG from opcode (ld_r8_r8) 0x{:X}", opcode)
                 abort()
             }
         }
@@ -432,15 +479,16 @@ class CPU {
             5u8 => { .l = value }
             7u8 => { .a = value }
             else => {
-                eprintln("Error decoding REG from opcode (ld_r8_r8)")
+                eprintln("Error decoding REG from opcode (ld_r8_r8) 0x{:X}", opcode)
                 abort()
             }
         }
-        if .debug { println("[OP 0x{:X}] LOAD REG {} into REG {}", opcode, regname[opcode & 7], regname[(opcode >> 3) & 7]) }
     }
 
-    function execute(mut this, mmu: &mut MMU, opcode: u8) throws -> i64 {
-        // println("ABOUT TO RUN OPCODE 0x{:X}", opcode)
+    function execute(mut this, mmu: &mut MMU) throws -> u32 {
+        if .debug { .print_debug_info(opcode: mmu.read(addr: .pc), mmu) }
+            
+        let opcode = .fetch(mmu)
         mut cycles: u32 = 0
 
         let op_cycles: [i64] = [
@@ -488,21 +536,17 @@ class CPU {
             // LD (r16), A
             0x02u8 => {
                 mmu.write(addr: .get_bc(), value: .a)
-                if .debug { println("[OP 0x{:X}] LOAD value from REG A into ADDR 0x{:X} from BC", opcode, .get_bc()) }
             }
             0x12u8 => {
                 mmu.write(addr: .get_de(), value: .a)
-                if .debug { println("[OP 0x{:X}] LOAD value from REG A into ADDR 0x{:X} from DE", opcode, .get_de()) }
             }
 
             // LD A, (r16)
             0x0Au8 => {
                 .a = mmu.read(addr: .get_bc())
-                if .debug { println("[OP 0x{:X}] LOAD value from ADDR 0x{:X} into REG A", opcode, .get_bc()) }
             }
             0x1Au8 => {
                 .a = mmu.read(addr: .get_de())
-                if .debug { println("[OP 0x{:X}] LOAD value from ADDR 0x{:X} into REG A", opcode, .get_de()) }
             }
 
             // LD (HL),n
@@ -510,49 +554,42 @@ class CPU {
                 let addr = .get_hl()
                 let value = .fetch(mmu)
                 mmu.write(addr, value)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from HL into ADDR 0x{:X}", opcode, value, addr) }
             }
 
             // LD A, (a16)
             0xFAu8 => {
                 let addr = .fetch_word(mmu)
                 .a = mmu.read(addr)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x:{:X}) in ADDR 0x{:X} into REG A", opcode, .a, addr) }
             }
 
             // LD (a16), A
             0xEAu8 => {
                 let addr = .fetch_word(mmu)
                 mmu.write(addr, value: .a)
-                if .debug { println("[OP 0x{:X}] Loading value (0x{:X}) into addr 0x{:X}", opcode, .a, addr) }
             }
 
             // ld A,(FF00+n)
             0xF0u8 => {
                 let addr = 0xFF00u16 | (.fetch(mmu) as! u16)
                 .a = mmu.read(addr)
-                if .debug { println("[OP 0x{:X}] Loading value (0x{:X}) FROM 0x{:X} into REG A", opcode, .a, addr) }
             }
 
             // ld (FF00+n),A
             0xE0u8 => {
                 let addr = 0xff00u16 | (.fetch(mmu) as! u16)
                 mmu.write(addr, value: .a)
-                if .debug { println("[OP 0x{:X}] reading val (0x{:X}) from Memory addr: 0x{:X} into REG A", opcode, .a, addr) }
             }
 
             // ld A,(FF00+C)
             0xF2u8 => {
                 let addr = 0xFF00u16 | (.c as! u16)
                 .a = mmu.read(addr)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from ADDR 0x{:X} into REG A", opcode, .a, addr) }
             }
 
             // ld (FF00+C),A
             0xE2u8 => {
                 let addr = 0xFF00u16 | (.c as! u16)
                 mmu.write(addr, value: .a)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG A into ADDR 0x{:X}", opcode, .a, addr) }
             }
 
             // LD (HL+), A
@@ -560,7 +597,6 @@ class CPU {
                 let addr = .get_hl()
                 mmu.write(addr, value: .a)
                 .set_hl(addr + 1)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG A into ADDR 0x{:X}, INC HL", opcode, .a, addr) }
             }
 
             // LD (HL-), A
@@ -568,7 +604,6 @@ class CPU {
                 let addr = .get_hl()
                 mmu.write(addr, value: .a)
                 .set_hl(addr - 1)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) from REG A into ADDR 0x{:X}, DEC HL", opcode, .a, addr) }
             }
 
             // LD A, (HL+)
@@ -576,7 +611,6 @@ class CPU {
                 let addr = .get_hl()
                 .a = mmu.read(addr)
                 .set_hl(addr + 1)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into REG A FROM ADDR 0x{:X}, INC HL", opcode, .a, addr) }
             }
 
             // LD A, (HL-)
@@ -584,14 +618,12 @@ class CPU {
                 let addr = .get_hl()
                 .a = mmu.read(addr)
                 .set_hl(addr - 1)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) into REG A FROM ADDR 0x{:X}, DEC HL", opcode, .a, addr) }
             }
 
             // LD (d16), SP
             0x08u8 => {
                 let addr = .fetch_word(mmu)
                 mmu.write_word(addr, value: .sp)
-                if .debug { println("[OP 0x{:X}] LOAD value (0x{:X}) FROM SP into ADDR 0x{:X}", opcode, .sp, addr) }
             }
 
             // LD SP, d8
@@ -604,12 +636,10 @@ class CPU {
                 .set_flag(Flag::Z, value: false)
                 let ab = wrapping_add_u16(a, b)
                 .set_hl(ab)
-                if .debug { println("[OP 0x{:X}] LOAD SP+D8 into HL", opcode) }
             }
 
             0xF9u8 => {
                 .sp = .get_hl()
-                if .debug { println("[OP 0x{:X}] LOAD HL into SP", opcode) }
             }
 
             // ld rr,nn
@@ -624,7 +654,6 @@ class CPU {
                     }
                     else => {}
                 }
-                if .debug { println("[OP 0x{:X}] LOAD value ({:X}) into SP", opcode, value) }
             }
 
             // LD R8, HL
@@ -637,34 +666,23 @@ class CPU {
             0x40u8 | 0x41u8 | 0x42u8 | 0x43u8 | 0x44u8 | 0x45u8 | 0x47u8 | 0x48u8 | 0x49u8 | 0x4Au8 | 0x4Bu8 | 0x4Cu8 | 0x4Du8 | 0x4Fu8 => .ld_r8_r8(opcode)
             0x50u8 | 0x51u8 | 0x52u8 | 0x53u8 | 0x54u8 | 0x55u8 | 0x57u8 | 0x58u8 | 0x59u8 | 0x5Au8 | 0x5Bu8 | 0x5Cu8 | 0x5Du8 | 0x5Fu8 => .ld_r8_r8(opcode)
             0x60u8 | 0x61u8 | 0x62u8 | 0x63u8 | 0x64u8 | 0x65u8 | 0x67u8 | 0x68u8 | 0x69u8 | 0x6Au8 | 0x6Bu8 | 0x6Cu8 | 0x6Du8 | 0x6Fu8 => .ld_r8_r8(opcode)
-            0x70u8 | 0x71u8 | 0x72u8 | 0x73u8 | 0x74u8 | 0x75u8 | 0x77u8 | 0x78u8 | 0x79u8 | 0x7Au8 | 0x7Bu8 | 0x7Cu8 | 0x7Du8 | 0x7Fu8 => .ld_r8_r8(opcode)
+            0x78u8 | 0x79u8 | 0x7Au8 | 0x7Bu8 | 0x7Cu8 | 0x7Du8 | 0x7Fu8 => .ld_r8_r8(opcode)
+
+            0x70u8 => { mmu.write(addr: .get_hl(), value: .b) }
+            0x71u8 => { mmu.write(addr: .get_hl(), value: .c) }
+            0x72u8 => { mmu.write(addr: .get_hl(), value: .d) }
+            0x73u8 => { mmu.write(addr: .get_hl(), value: .e) }
+            0x74u8 => { mmu.write(addr: .get_hl(), value: .h) }
+            0x75u8 => { mmu.write(addr: .get_hl(), value: .l) }
+            0x77u8 => { mmu.write(addr: .get_hl(), value: .a) }
             // ==========================================================================================================
 
             // PUSH
             // ==========================================================================================================
-            0xC5u8 => {
-                .stack_push(mmu, value: .get_bc())
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG BC into SP", opcode, .a, .get_hl()) }
-            }
-
-            0xD5u8 => {
-                .stack_push(mmu, value: .get_de())
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG DE into SP", opcode, .a, .get_hl()) }
-            }
-
-            0xE5u8 => {
-                .stack_push(mmu, value: .get_hl())
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG HL into SP", opcode, .a, .get_hl()) }
-            }
-
-            0xF5u8 => {
-                .stack_push(mmu, value: .get_af())
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] PUSH value (0x{:X}) from REG AF into SP", opcode, .a, .get_hl()) }
-            }
+            0xC5u8 => { .stack_push(mmu, value: .get_bc()) }
+            0xD5u8 => { .stack_push(mmu, value: .get_de()) }
+            0xE5u8 => { .stack_push(mmu, value: .get_hl()) }
+            0xF5u8 => { .stack_push(mmu, value: .get_af()) }
             // ==========================================================================================================
 
             // POP
@@ -678,8 +696,6 @@ class CPU {
                     0xF1u8 => {.set_af(value)}
                     else => {}
                 }
-                cycles = 12
-                if .debug { println("[OP 0x{:X}] POP SP into REG pair", opcode) }
             }
             // ==========================================================================================================
 
@@ -819,43 +835,34 @@ class CPU {
                 .set_flag(Flag::N, value: false)
                 .set_flag(Flag::Z, value: false)
                 .sp = wrapping_add_u16(a, b)
-                if .debug { println("[OP 0x{:X}] ADD value (0x{:X}) into SP", opcode, b) }
             }
 
             // INC r16
             0x03u8 => {
                 .set_bc(wrapping_add_u16(.get_bc()))
-                if .debug { println("[OP 0x{:X}] INC BC", opcode) }
             }
             0x13u8 => {
                 .set_de(wrapping_add_u16(.get_de()))
-                if .debug { println("[OP 0x{:X}] INC DE", opcode) }
             }
             0x23u8 => {
                 .set_hl(wrapping_add_u16(.get_hl()))
-                if .debug { println("[OP 0x{:X}] INC HL", opcode) }
             }
             0x33u8 => {
                 .sp = wrapping_add_u16(.sp)
-                if .debug { println("[OP 0x{:X}] INC SP", opcode) }
             }
 
             // DEC r16
             0x0bu8 => {
                 .set_bc(wrapping_sub_u16(.get_bc(), 1))
-                if .debug { println("[OP 0x{:X}] DEC BC", opcode) }
             }
             0x1bu8 => {
                 .set_de(wrapping_sub_u16(.get_de(), 1))
-                if .debug { println("[OP 0x{:X}] DEC DE", opcode) }
             }
             0x2bu8 => {
                 .set_hl(wrapping_sub_u16(.get_hl(), 1))
-                if .debug { println("[OP 0x{:X}] DEC HL", opcode) }
             }
             0x3bu8 => {
                 .sp = wrapping_sub_u16(.sp, 1)
-                if .debug { println("[OP 0x{:X}] DEC SP", opcode) }
             }
 
             // DAA
@@ -883,7 +890,6 @@ class CPU {
                 .set_flag(Flag::H, value: false)
                 .set_flag(Flag::Z, value: a == 0x00)
                 .a = a
-                if .debug { println("[OP 0x{:X}] ADJUST DECIMAL on REG A", opcode) }
             }
 
             // CPL
@@ -891,7 +897,6 @@ class CPU {
                 .a = ~.a
                 .set_flag(Flag::H, value: true)
                 .set_flag(Flag::N, value: true)
-                if .debug { println("[OP 0x{:X}] Bit Flip REG A", opcode) }
             }
             // ==========================================================================================================
 
@@ -900,10 +905,7 @@ class CPU {
             // ==========================================================================================================
             
             // NOP
-            0x00u8 => { 
-                cycles = 4
-                if .debug { println("[OP 0x{:X}] NOOP", opcode) }
-            }
+            0x00u8 => { }
 
             // CCF
             0x3Fu8 => {
@@ -911,7 +913,6 @@ class CPU {
                 .set_flag(Flag::C, value)
                 .set_flag(Flag::H, value: false)
                 .set_flag(Flag::N, value: false)
-                if .debug { println("[OP 0x{:X}] Negate Flag C", opcode) }
             }
 
             // SCF
@@ -919,28 +920,24 @@ class CPU {
                 .set_flag(Flag::C, value: true)
                 .set_flag(Flag::H, value: false)
                 .set_flag(Flag::N, value: false)
-                if .debug { println("[OP 0x{:X}] Set Carry Flag", opcode) }
             }
 
             // HALT
             0x76u8 => {
                 .halted = true
-                if .debug { println("[OP 0x{:X}] HALT CPU", opcode) }
             }
 
             // STOP
-            0x10u8 => { if .debug { println("[OP 0x{:X}] STOP CPU", opcode) } }
+            0x10u8 => { }
 
             // DI
             0xF3u8 => {
                 .ei = false
-                if .debug { println("[OP 0x{:X}] DISABLE INTERRUPT", opcode) }
             }
 
             // EI
             0xFBu8 => {
                 .ei = true
-                if .debug { println("[OP 0x{:X}] ENABLE INTERRUPT", opcode) }
             }
 
             // RLCA
@@ -970,11 +967,9 @@ class CPU {
             // JUMP
             0xC3u8 => {
                 .pc = .fetch_word(mmu)
-                if .debug { println("[OP 0x{:X}] JUMP to {:X}", opcode, .pc) }
             }
             0xE9u8 => {
                 .pc = .get_hl()
-                if .debug { println("[OP 0x{:X}] JUMP to {:X}", opcode, .pc) }
             }
 
             // JUMP IF
@@ -993,7 +988,6 @@ class CPU {
                 if cond {
                     .pc = pc
                 }
-                if .debug { println("[OP 0x{:X}] JUMP to {:X} IF {} is true", opcode, .pc, cond) }
             }
 
             // JR
@@ -1013,7 +1007,6 @@ class CPU {
                 }
                 let value = .fetch(mmu)
                 if cond { .alu_jr(value, opcode) }
-                if .debug { println("[OP 0x{:X}] JMP to 0x{:X} if {} is true", opcode, .pc, cond) }
             }
             // ==========================================================================================================
 
@@ -1021,7 +1014,6 @@ class CPU {
             0xCDu8 => {
                 .stack_push(mmu, value: .pc + 2)
                 .pc = .fetch_word(mmu)
-                if .debug { println("[OP 0x{:X}] CALL SP 0x{:X}", opcode, .pc) }
             }
 
             // CALL IF
@@ -1041,50 +1033,41 @@ class CPU {
                     .stack_push(mmu, value: .pc)
                     .pc = nn
                 }
-                if .debug { println("[OP 0x{:X}] CALL SP 0x{:X} if {} is true", opcode, nn, cond) }
             }
 
             // RST
             0xC7u8 => {
                 .stack_push(mmu, value: .pc)
                 .pc = 0x00
-                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
             }
             0xCFu8 => {
                 .stack_push(mmu, value: .pc)
                 .pc = 0x08
-                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
             }
             0xDFu8 => {
                 .stack_push(mmu, value: .pc)
                 .pc = 0x10
-                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
             }
             0xE7u8 => {
                 .stack_push(mmu, value: .pc)
                 .pc = 0x18
-                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
             }
             0xEFu8 => {
                 .stack_push(mmu, value: .pc)
                 .pc = 0x20
-                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
             }
             0xF7u8 => {
                 .stack_push(mmu, value: .pc)
                 .pc = 0x30
-                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
             }
             0xFFu8 => {
                 .stack_push(mmu, value: .pc)
                 .pc = 0x38
-                if .debug { println("[OP 0x{:X}] CALL TO 0x{:X}", opcode, .pc) }
             }
 
             // RET
             0xC9u8 => {
                 .pc = .stack_pop(mmu)
-                if .debug { println("[OP 0x{:X}] RETURN to {:X}", opcode, .pc) }
             }
 
             // RET IF
@@ -1102,14 +1085,12 @@ class CPU {
                 if cond {
                     .pc = .stack_pop(mmu)
                 }
-                if .debug { println("[OP 0x{:X}] RETURN to {:X} IF {} is true", opcode, .pc, cond) }
             }
 
             // RETI
             0xD9u8 => {
                 .pc = .stack_pop(mmu)
                 .ei = true
-                if .debug { println("[OP 0x{:X}] RETURN to {:X}, Enable Interrupt", opcode, .pc) }
             }
 
             // Extended Bit Operations
@@ -1186,14 +1167,17 @@ class CPU {
             else => 0x00i64
         }
 
+        .ticks++
+
         if opcode == 0xCBu8 {
-            return cb_cycles[opcode] * 4
+            return cb_cycles[opcode]
         } else {
-            return (op_cycles[opcode] * 4) + extra_cycles
+            return op_cycles[opcode] + extra_cycles
         }
     }
 
-    function extended_bit_operations(mut this, mmu: &mut MMU, opcode: u8) {
+    function extended_bit_operations(mut this, mmu: &mut MMU, opcode: u8) throws {
+
         let cb = mmu.read(addr: .pc)
         .pc += 1
         match cb {
@@ -1632,7 +1616,13 @@ class CPU {
 }
 
 function wrapping_add_u8(anon a: u8, b: u8 = 1u8) -> u8 => unchecked_add(a, b)
-function wrapping_sub_u8(anon a: u8, anon b: u8) -> u8 => unchecked_add(a, (256u16-(b as! u16)) as! u8)
+function wrapping_sub_u8(anon a: u8, anon b: u8) -> u8 {
+    if (a == 0x00u8) and (b == 0x00u8) {
+        return 0x00u8
+    } else {
+        return unchecked_add(a, (256u16-(b as! u16)) as! u8)
+    }
+}
 function wrapping_sub_u16(anon a: u16, anon b: u16) -> u16 => unchecked_add(a, (256u32-(b as! u32)) as! u16)
 function wrapping_add_u16(anon a: u16, b: u16 = 1u16) -> u16 => unchecked_add(a, b)
 function convert_u8_to_i8(anon a: u8) -> i8 {
@@ -1650,4 +1640,14 @@ function panic_opcode(anon message: String, opcode: u8) throws {
 function panic(anon message: String) {
     eprintln(message)
     abort()
+}
+
+function trailing_zeros(anon mut x: u8) -> i64 {
+    mut count = 0
+    while ((x & 1) == 0) {
+        x = x >> 1
+        count++
+    }
+
+    return count
 }

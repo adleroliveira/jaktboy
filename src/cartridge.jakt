@@ -287,6 +287,28 @@ function to_string(anon slice: ArraySlice<u8>) throws -> String {
 
 function to_word(anon a: u8, anon b: u8) => ((a << 8) | b) as! u16
 
+function rom_size(anon b: u8) -> usize {
+    let bank = 16384
+    return match b {
+        0x00u8 => bank * 2
+        0x01u8 => bank * 4
+        0x02u8 => bank * 8
+        0x03u8 => bank * 16
+        0x04u8 => bank * 32
+        0x05u8 => bank * 64
+        0x06u8 => bank * 128
+        0x07u8 => bank * 256
+        0x08u8 => bank * 512
+        0x52u8 => bank * 72
+        0x53u8 => bank * 80
+        0x54u8 => bank * 96
+        else => {
+            eprintln("Unknown Destination code: 0x{:X}", b)
+            abort()
+        }
+    }
+}
+
 struct CartridgeHeader {
     entry_point: [u8]
     nintendo_logo: [u8]
@@ -310,15 +332,17 @@ struct CartridgeHeader {
             abort()
         }
 
-        // mut global_checksum = 0
-        // for i in 0..rom.size() - 2 {
-        //     global_checksum += rom[i] as! i64
-        // }
-        // println("Global checksum {}", global_checksum)
+        let rom_size_bytes = rom_size(rom[0x0148])
 
-        // println("{:x} {:x} {:#}" rom[0x14E], rom[0x14F], to_word(rom[0x14E], rom[0x14F]))
+        guard rom.size() <= rom_size_bytes else {
+            eprintln("ROM size more than {} ({})", rom_size_bytes, rom.size())
+            abort()
+        }
 
-        return CartridgeHeader(
+        let rom_size = RomSize::from_byte(rom[0x0148])
+        let cartridge_type = CartridgeType::from_byte(rom[0x0147])
+
+        let cart_header = CartridgeHeader(
             entry_point: rom[0x100..0x104].to_array()
             nintendo_logo: rom[0x104..0x134].to_array()
             title: to_string(rom[0x134..0x144])
@@ -327,8 +351,8 @@ struct CartridgeHeader {
             color_mode: ColorMode::from_byte(rom[0x143])
             // publisher: to_string(rom[0x144..0x146])
             sgb: rom[0x146] == 0x03u8
-            cartridge_type: CartridgeType::from_byte(rom[0x147])
-            rom_size: RomSize::from_byte(rom[0x148])
+            cartridge_type
+            rom_size
             ram_size: RamSize::from_byte(rom[0x149])
             destination: Destination::from_byte(rom[0x14A])
             old_license_code: rom[0x14B] == 0x33u8
@@ -336,24 +360,103 @@ struct CartridgeHeader {
             header_checksum: rom[0x14D]
             global_checksum: to_word(rom[0x14E], rom[0x14F])
         )
+
+        return cart_header
     }
 }
 
 struct Cartridge {
     rom: [u8]
+    ram: [u8]
+    bank_mode: BankMode
+    bank: u8
+    ram_enabled: bool
+    save_path: String
+
     public header: CartridgeHeader
 
     public function read(this, addr: u16) -> u8 {
-        return .rom[addr]
+        if addr >= 0x0000 and addr <= 0x3FFF {
+            return .rom[addr]
+        }
+        if addr >= 0x4000 and addr <= 0x7FFF {
+            let i = (.rom_bank() * 0x4000) + (addr as! usize) - 0x4000
+            return .rom[addr]
+        }
+        if addr >= 0xA000 and addr <= 0xBFFF {
+            if .ram_enabled {
+                let i = (.rom_bank() * 0x2000) + (addr as! usize) - 0xA000
+                return .ram[i]
+            }
+
+            return 0x00
+        }
+
+        return 0x00
     }
 
     public function write(mut this, addr: u16, value: u8) {
-        .rom[addr] = value
+        if addr >= 0xA000 and addr <= 0xBFFF {
+            if .ram_enabled {
+                let i = .ram_bank() * 0x2000 + (addr as! usize) - 0xA000
+                .ram[i] = value
+            }
+        }
+        if addr >= 0x0000 and addr <= 0x1FFF {
+            .ram_enabled = (value & 0x0F) == 0x0A
+        }
+        if addr >= 0x2000 and addr <= 0x3FFF {
+            mut n = value & 0x1F
+            if n == 0x00 {
+                n = 0x01
+            }
+            .bank = (.bank & 0x60) | n
+        }
+        if addr >= 0x4000 and addr <= 0x5FFF {
+            mut n = value & 0x03
+            .bank = .bank & 0x9F | (n << 5)
+        }
+        if addr >= 0x6000 and addr <= 0x7FFF {
+            match value {
+                0x00u8 => { .bank_mode = BankMode::Rom }
+                0x01u8 => { .bank_mode = BankMode::Ram }
+                else => {
+                    eprintln("Ivalid Cartridge Type")
+                    abort()
+                }
+            }
+        }
     }
 
     public function load(anon rom: [u8]) throws -> Cartridge {
         let header = CartridgeHeader::from_bytes(rom)
-        return Cartridge(rom, header)
+        return Cartridge(
+            rom
+            ram: []
+            bank_mode: BankMode::Rom
+            bank: 0x01
+            ram_enabled: false
+            save_path: ""
+            header
+        )
+    }
+
+    public function rom_bank(this) -> usize {
+        let n = match .bank_mode {
+            Rom => .bank & 0x7F
+            Ram => .bank & 0x1F
+        }
+
+        return n as! usize
+    }
+
+    public function ram_bank(this) -> usize {
+        let n = match .bank_mode {
+            Rom => 0x00u8
+            Ram => (.bank & 0x60) >> 5
+        }
+
+        return n as! usize
     }
 }
 

@@ -31,4 +31,12 @@ struct Joypad {
 
         return .select
     }
+
+    public function write(mut this, addr: u16, value: u8) {
+        guard addr == 0xFF00 else  {
+            eprintln("ASSERTION FAILED, IO WRITE OUTSIDE 0xFF00")
+            abort()
+        }
+        .select = value
+    }
 }

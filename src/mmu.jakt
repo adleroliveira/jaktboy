@@ -1,6 +1,5 @@
 import cartridge { Cartridge }
 import joypad { Joypad }
-import timer { Timer }
 import gpu { GPU }
 
 enum InterruptFlag: u8 {
@@ -11,11 +10,118 @@ enum InterruptFlag: u8 {
     Joypad = 5
 }
 
-struct InterruptMasterEnable {
-    data: u8
-    public function init(anon data: u8) => InterruptMasterEnable(data)
-    public function set(mut this, flag: InterruptFlag) { .data = .data | 1 << flag as! u8 }
+class InterruptMasterEnable {
+    public data: u8
+    public function init() throws => InterruptMasterEnable(data: 0xE1)
+    public function set(mut this, flag: InterruptFlag) { .data = .data | (1 << (flag as! u8)) }
 }
+
+struct Serial {
+    message: String
+
+}
+
+struct Clock {
+    period: u32
+    n: u32
+
+    public function init(anon period: u32) => Clock(period, n: 0)
+
+    public function next(mut this, cycles: u32) -> u32 {
+        .n += cycles
+        let rs = .n / .period
+        .n = .n % .period
+        return rs
+    }
+}
+
+struct TimerRegister {
+    div: u8
+    tima: u8
+    tma: u8
+    tac: u8
+}
+
+struct Timer {
+    registers: TimerRegister
+    div_clock: Clock
+    tma_clock: Clock
+
+    public function init() => Timer(
+        registers: TimerRegister(div: 0u8, tima: 0u8, tma: 0u8, tac: 0u8)
+        div_clock: Clock::init(256)
+        tma_clock: Clock::init(1024)
+    )
+
+    public function read(this, addr: u16) => match addr {
+        0xFF04u16 => .registers.div
+        0xFF05u16 => .registers.tima
+        0xFF06u16 => .registers.tma
+        0xFF07u16 => .registers.tac
+        else => {
+            eprintln("[TIMER] Unsupported address 0x{:x}", addr)
+            abort()
+        }
+    }
+
+    public function write(mut this, addr: u16, value: u8) {
+        match addr {
+            0xFF04u16 => {
+                .registers.div = 0x00
+                .div_clock.n = 0x00
+            }
+            0xFF05u16 => { .registers.tima = value }
+            0xFF06u16 => { .registers.tma = value }
+            0xFF07u16 => { .update_period(value) }
+            else => {
+                eprintln("Unsupported timer address")
+                abort()
+            }
+        }
+    }
+
+    function update_period(mut this, value: u8) {
+        if ((.registers.tac & 0x03) != (value & 0x03)) {
+            .tma_clock.n = 0x00
+            .tma_clock.period = match (value & 0x03) {
+                0x00u8 => 1024u32
+                0x01u8 => 16u32
+                0x02u8 => 64u32
+                0x03u8 => 256u32
+                else => {
+                    eprintln("Timer Panic: Invalid period")
+                    abort()
+                }
+            }
+            .registers.tima = .registers.tma
+        }
+        .registers.tac = value
+    }
+
+    function tick(mut this, cycles: u32, ime: &mut InterruptMasterEnable) {
+        .registers.div = wrapping_add_u8(.registers.div, .div_clock.next(cycles) as! u8)
+        if (.registers.tac & 0x04) != 0x00 {
+            let n = .tma_clock.next(cycles)
+            for i in 0..n {
+                .registers.tima = wrapping_add_u8(.registers.tima, 1)
+                if .registers.tima == 0x00 {
+                    .registers.tima = .registers.tma
+                    ime.set(flag: InterruptFlag::Timer)
+                }
+            }
+        }
+    }
+}
+
+// enum CPUSpeed {
+//     Normal
+//     Double
+
+//     function value(this) -> u8 => match this {
+//         Normal => 0x01u8
+//         Double => 0x02u8
+//     }
+// }
 
 class MMU {
     wram: [u8] // 32Kb
@@ -27,26 +133,60 @@ class MMU {
     joypad: Joypad
     timer: Timer
     gpu: GPU
+    speed: u8
+    public serial_data0: u8
+    public serial_data1: u8
+    shift: bool
 
     public function init(cartridge: Cartridge) throws -> MMU {
         mut joypad = Joypad::init()
+        let speed = 0x01u8
         mut mmu = MMU(
             wram: [0u8; 0x8000]
             hram: [0u8; 0x7F]
             wram_bank: 0x01
-            ime: InterruptMasterEnable::init(0)
+            ime: InterruptMasterEnable::init()
             ie: 0x00u8
             cartridge
             joypad
             timer: Timer::init()
             gpu: GPU::init()
+            speed
+            serial_data0: 0x00
+            serial_data1: 0x00
+            shift: false
         )
 
-        mmu.write(addr: 0xff05, value: 0x00)
-        mmu.write(addr: 0xff06, value: 0x00)
-        mmu.write(addr: 0xff07, value: 0x00)
-        // mmu.write(addr: 0xff10, value: 0x80)
-        // mmu.write(addr: 0xff11, value: 0xbf)
+        mmu.write(addr: 0xFF05, value: 0x00)
+        mmu.write(addr: 0xFF06, value: 0x00)
+        mmu.write(addr: 0xFF07, value: 0x00)
+        mmu.write(addr: 0xFF10, value: 0x80)
+        mmu.write(addr: 0xFF11, value: 0xBF)
+        mmu.write(addr: 0xFF12, value: 0xF3)
+        mmu.write(addr: 0xFF14, value: 0xBF)
+        mmu.write(addr: 0xFF16, value: 0x3F)
+        mmu.write(addr: 0xFF17, value: 0x00)
+        mmu.write(addr: 0xFF19, value: 0xBF)
+        mmu.write(addr: 0xFF1A, value: 0x7F)
+        mmu.write(addr: 0xFF1B, value: 0xFF)
+        mmu.write(addr: 0xFF1C, value: 0x9F)
+        mmu.write(addr: 0xFF1E, value: 0xFF)
+        mmu.write(addr: 0xFF20, value: 0xFF)
+        mmu.write(addr: 0xFF21, value: 0x00)
+        mmu.write(addr: 0xFF22, value: 0x00)
+        mmu.write(addr: 0xFF23, value: 0xBF)
+        mmu.write(addr: 0xFF24, value: 0x77)
+        mmu.write(addr: 0xFF25, value: 0xF3)
+        mmu.write(addr: 0xFF26, value: 0xF1)
+        mmu.write(addr: 0xFF40, value: 0x91)
+        mmu.write(addr: 0xFF42, value: 0x00)
+        mmu.write(addr: 0xFF43, value: 0x00)
+        mmu.write(addr: 0xFF45, value: 0x00)
+        mmu.write(addr: 0xFF47, value: 0xFC)
+        mmu.write(addr: 0xFF48, value: 0xFF)
+        mmu.write(addr: 0xFF49, value: 0xFF)
+        mmu.write(addr: 0xFF4A, value: 0x00)
+        mmu.write(addr: 0xFF4B, value: 0x00)
         return mmu
     }
 
@@ -88,6 +228,16 @@ class MMU {
             return .joypad.read(addr: 0xFF00)
         }
 
+        if addr >= 0xFF01 and addr <= 0xFF02 {
+            println("LALALALLA 0x{:X}", addr)
+            if addr == 0xFF01 {
+                return .serial_data0
+            }
+            if addr == 0xFF02 {
+                return .serial_data1
+            }
+        }
+
         if addr >= 0xFF04 and addr <= 0xFF07 {
             return .timer.read(addr)
         }
@@ -97,12 +247,24 @@ class MMU {
         }
 
         if addr >= 0xFF10 and addr <= 0xFF3F {
-            println("WARNING: APU Memory Addr Not implemented yet")
+            // println("WARNING: APU Memory Addr Not implemented yet")
             return 0x00
         }
 
         if (addr >= 0xFF40 and addr <= 0xFF45) or (addr >= 0xFF47 and addr <= 0xFF4B) or addr == 0xFF4F {
             return .gpu.read(addr)
+        }
+
+        if addr == 0xFF4D {
+            mut a = 0x00u8
+            if .speed == 0x02u8 {
+                a = 0x80u8
+            }
+            mut b = 0x00u8
+            if .shift {
+                b = 0x01u8
+            }
+            return a | b
         }
 
         if addr == 0xFF70 {
@@ -117,7 +279,7 @@ class MMU {
             return .ie
         }
 
-        println("WARNING: Access to data out of bounds/not implemented memory address {:x}", addr)
+        // println("WARNING: Access to data out of bounds/not implemented memory address {:x}", addr)
         return 0x00
     }
 
@@ -125,8 +287,8 @@ class MMU {
         // Target: Cartridge
         if (addr >= 0x0000 and addr <= 0x7FFF) or (addr >= 0xA000 and addr <= 0xbFFF) {
             .cartridge.write(addr, value)
-
-        // Target: Work Ram (Bank 00)
+        } else if addr >= 0x8000 and addr <= 0x9FFF {
+            println("Trying to write to the GPU")
         } else if addr >= 0xC000 and addr <= 0xCFFF {
             .wram[addr - 0xC000] = value
 
@@ -137,13 +299,36 @@ class MMU {
             .wram[addr - 0xE000] = value
         } else if addr >= 0xF000 and addr <= 0xFDFF {
             .wram[addr - 0xF000 + (0x1000uz * .wram_bank) as! u16] = value
+        } else if addr >= 0xFE00 and addr <= 0xFE9F {
+            println("Trying to write to the GPU")
         } else if addr >= 0xFEA0 and addr <= 0xFEFF {
             // NOOP region
-            println("Something is trying to set values in a noop region")
+            // println("Something is trying to set values in a noop region")
+        } else if addr == 0xFF00 {
+            return .joypad.write(addr, value)
+        } else if addr >= 0xFF01 and addr <= 0xFF02 {
+            if addr == 0xFF01 {
+                .serial_data0 = value
+            }
+
+            if addr == 0xFF02 {
+                .serial_data1 = value
+            }
         } else if addr >= 0xFF04 and addr <= 0xFF07 {
             .timer.write(addr, value)
         } else if addr >= 0xFF10 and addr <= 0xFF3F {
             println("WARNING: APU Memory Addr Not implemented yet")
+        } else if addr == 0xFF00 {
+            guard value <= 0xF1 else {
+                eprintln("ASSERTION FAILED: DMA TRANSFER")
+                abort()
+            }
+
+            let base = (value as! u16) << 8
+            for i in 0..0xA0 {
+                let b = .read(addr: base + 1)
+                .write(addr: 0xFE00, value: b)
+            }
         } else if addr == 0xFF70 {
             .wram_bank = match (value & 0x7) as! usize {
                 0uz => 1uz
@@ -151,13 +336,27 @@ class MMU {
             }
         } else if addr == 0xFF0F {
             .ime.data = value
+        } else if (addr >= 0xFF40 and addr <= 0xFF45 or (addr >= 0xFF47 and addr <= 0xFF4B)) or addr == 0xFF4F {
+            println("Trying to write to the GPU")
+        } else if addr == 0xFF4D {
+            .shift = ((value & 0x01) == 0x01)
         } else if addr >= 0xFF80 and addr < 0xFFFE {
             .hram[addr - 0xFF80] = value
         } else if addr == 0xFFFF {
+            println("ENABLE INTERRUPT SET TO {}", value)
             .ie = value
         } else {
             eprintln("Trying to set value on out of bounds/not implemented memory address {:x}", addr)
             abort()
         }
     }
+
+    public function tick(mut this, cycles: u32) {
+        let cpu_divider = .speed as! u32
+        let cpu_cycles = cycles * cpu_divider
+        this.timer.tick(cycles, ime: &mut .ime)
+    }
 }
+
+
+function wrapping_add_u8(anon a: u8, b: u8 = 1u8) -> u8 => unchecked_add(a, b)

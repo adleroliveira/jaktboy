@@ -3,7 +3,7 @@ import mmu { MMU }
 import cartridge { Cartridge }
 
 class System {
-    cpu: CPU
+    public cpu: CPU
     mmu: MMU
 
     public function init(filename: String) throws -> System {
@@ -15,13 +15,27 @@ class System {
         return System(cpu, mmu)
     }
 
+    public function tick(mut this) throws -> u32 {
+        if .mmu.read(addr: .cpu.pc) == 0x10 {
+            println("SWITCH SPEED")
+        }
+        let cycles = .cpu.tick(mmu: &mut .mmu)
+        .mmu.tick(cycles)
+        return cycles
+    }
+
     public function run(mut this) throws {
-        for i in 0..200 {
-            .cpu.print_debug()
-            print("{}: ", i)
-            .cpu.tick(mmu: &mut .mmu)
+        loop {
+            let cycles = .tick()
+            // println("Cycles {}", cycles)
+            // if .cpu.ticks >= 2000 {
+            //     .cpu.halted = true
+            // }
+            if .cpu.halted {
+                break
+            }
         }
         
-        println("END OF 200 instructions")
+        // println("END OF 2000 instructions")
     }
 }
