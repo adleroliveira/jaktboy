@@ -30,6 +30,7 @@ class CPU {
     public ticks: i64
     debug: bool
     debug_message: String
+    previous_debug_message: String
 
     public function init(terminal: Terminal, debug: bool = false) throws -> CPU {
         mut s = StringBuilder::create()
@@ -54,6 +55,7 @@ class CPU {
             ticks: 0
             debug
             debug_message: ""
+            previous_debug_message: ""
         )
     }
 
@@ -79,7 +81,11 @@ class CPU {
         } else {
             flags += "-"
         }
-        println("{:0>8X} - {:04X}: ({:02X} {:02X} {:02X}) A: {:02X} F: {} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X}", .ticks, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), .a, flags, .b, .c, .d, .e, .h, .l, .sp)
+
+        if this.debug {
+            println("{:0>8X} - {:04X}: OPCPDE({:02X}) NN({:02X} {:02X}) Flags: {} AF: {:02X}{:02X} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X} | {}", .ticks, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), flags, .a, .f, .b, .c, .d, .e, .h, .l, .sp, .debug_message)
+        }
+        // 
         if mmu.serial_data1 == 0x81 {
             mut s = StringBuilder::create()
             s.append(mmu.serial_data0)
@@ -87,8 +93,13 @@ class CPU {
             mmu.write(addr: 0xFF02, value: 0x0)
         }
 
-        if .debug_message != "" {
+        if .debug_message != .previous_debug_message {
             println("DBG: {}", .debug_message)
+            .previous_debug_message = .debug_message
+        }
+
+        if .pc == 0xC33F {
+            // .halted = true
         }
     }
 
@@ -131,7 +142,7 @@ class CPU {
         if not .ei {
             return 0
         }
-        println("INTERRUPT MIDDLE")
+        
         .ei = false
         let n = trailing_zeros(ii)
         let int_flag = intf & not(1 << n)
@@ -146,7 +157,6 @@ class CPU {
         let c = .handle_interrupts(mmu)
         
         if c != 0 {
-            println("INTERRRRRRRRRRRRRRRRRRUP")
             cycles = c
         } else if .halted {
             cycles = 1
@@ -173,9 +183,7 @@ class CPU {
 
     function set_af(mut this, anon value: u16) {
         .a = (value >> 8) as! u8
-        let f = ((value & 0x00FF) as! u8) & 0xF0
-        println("POP AF 0x{:X}, F: 0x{:X}, New F: 0x{:X}", value, .f, f)
-        .f = f
+        .f = (value & 0x00F0) as! u8
     }
 
     function set_bc(mut this, anon value: u16) {
@@ -269,7 +277,6 @@ class CPU {
     }
 
     function alu_inc(mut this, anon a: u8, opcode: u8) throws -> u8 {
-        let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
         let r = wrapping_add_u8(a, 1)
         .set_flag(Flag::H, value: (a & 0x0F) + 0x01 > 0x0F)
         .set_flag(Flag::N, value: false)
@@ -278,7 +285,6 @@ class CPU {
     }
 
     function alu_dec(mut this, anon a: u8, opcode: u8) throws -> u8 {
-        let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
         let r = wrapping_sub_u8(a, 1)
         .set_flag(Flag::H, value: trailing_zeros(a) >= 4)
         .set_flag(Flag::N, value: true)
@@ -288,7 +294,7 @@ class CPU {
 
     function alu_add_hl(mut this, anon n: u16, opcode: u8) {
         let a = .get_hl()
-        let r = wrapping_add_u16(a, n)
+        let r = unchecked_add(a, n)
         .set_flag(Flag::C, value: a > (0xFFFFu16 - n))
         .set_flag(Flag::H, value: (a & 0x0FFFu16) + (n & 0x0FFFu16) > 0x0FFFu16)
         .set_flag(Flag::N, value: false)
@@ -417,7 +423,6 @@ class CPU {
                 abort()
             }
         }
-        // println("[OP 0x{:X}] LOAD immediate value to REG {}", opcode, regname[(opcode >> 3) & 7])
     }
 
     function ld_r8_hl(mut this, anon opcode: u8, mmu: &mut MMU) throws {
@@ -486,7 +491,7 @@ class CPU {
     }
 
     function execute(mut this, mmu: &mut MMU) throws -> u32 {
-        if .debug { .print_debug_info(opcode: mmu.read(addr: .pc), mmu) }
+        .print_debug_info(opcode: mmu.read(addr: .pc), mmu)
             
         let opcode = .fetch(mmu)
         mut cycles: u32 = 0
@@ -534,20 +539,12 @@ class CPU {
             // ==========================================================================================================
 
             // LD (r16), A
-            0x02u8 => {
-                mmu.write(addr: .get_bc(), value: .a)
-            }
-            0x12u8 => {
-                mmu.write(addr: .get_de(), value: .a)
-            }
+            0x02u8 => { mmu.write(addr: .get_bc(), value: .a) }
+            0x12u8 => { mmu.write(addr: .get_de(), value: .a) }
 
             // LD A, (r16)
-            0x0Au8 => {
-                .a = mmu.read(addr: .get_bc())
-            }
-            0x1Au8 => {
-                .a = mmu.read(addr: .get_de())
-            }
+            0x0Au8 => { .a = mmu.read(addr: .get_bc()) }
+            0x1Au8 => { .a = mmu.read(addr: .get_de()) }
 
             // LD (HL),n
             0x36u8 => {
@@ -629,18 +626,16 @@ class CPU {
             // LD SP, d8
             0xF8u8 => {
                 let a = .sp
-                let b = ((.fetch(mmu) as! i8) as! i16) as! u16
-                .set_flag(Flag::C, value: (a & 0x00FF) + (b & 0x00FF) > 0x00FF)
-                .set_flag(Flag::H, value: (a & 0x000F) + (b & 0x000F) > 0x000F)
+                let b = .fetch(mmu)
+                let r = wrapping_add_signed_u8_to_u16(a, b)
+                .set_flag(Flag::C, value: (a & 0x00FF) + (b as! u16 & 0x00FF) > 0x00FF)
+                .set_flag(Flag::H, value: (a & 0x000F) + (b as! u16 & 0x000F) > 0x000F)
                 .set_flag(Flag::N, value: false)
                 .set_flag(Flag::Z, value: false)
-                let ab = wrapping_add_u16(a, b)
-                .set_hl(ab)
+                .set_hl(r)
             }
 
-            0xF9u8 => {
-                .sp = .get_hl()
-            }
+            0xF9u8 => { .sp = .get_hl() }
 
             // ld rr,nn
             0x01u8 | 0x11u8 | 0x21u8 | 0x31u8 => { 
@@ -649,9 +644,7 @@ class CPU {
                     0x01u8 => .set_bc(value)
                     0x11u8 => .set_de(value)
                     0x21u8 => .set_hl(value)
-                    0x31u8 => { 
-                        .sp = value
-                    }
+                    0x31u8 => { .sp = value }
                     else => {}
                 }
             }
@@ -829,41 +822,26 @@ class CPU {
             // ADD SP, d8
             0xE8u8 => {
                 let a = .sp
-                let b = ((.fetch(mmu) as! i8) as! i16) as! u16
-                .set_flag(Flag::C, value: (a & 0x00FFu16) + (b & 0x00FFu16) > 0x00FFu16)
-                .set_flag(Flag::H, value: (a & 0x000Fu16) + (b & 0x000Fu16) > 0x000Fu16)
+                let b = .fetch(mmu)
+                let r = wrapping_add_signed_u8_to_u16(a, b)
+                .set_flag(Flag::C, value: (a & 0x00FF) + (b as! u16 & 0x00FF) > 0x00FF)
+                .set_flag(Flag::H, value: (a & 0x000F) + (b as! u16 & 0x000F) > 0x000F)
                 .set_flag(Flag::N, value: false)
                 .set_flag(Flag::Z, value: false)
-                .sp = wrapping_add_u16(a, b)
+                .sp = r
             }
 
             // INC r16
-            0x03u8 => {
-                .set_bc(wrapping_add_u16(.get_bc()))
-            }
-            0x13u8 => {
-                .set_de(wrapping_add_u16(.get_de()))
-            }
-            0x23u8 => {
-                .set_hl(wrapping_add_u16(.get_hl()))
-            }
-            0x33u8 => {
-                .sp = wrapping_add_u16(.sp)
-            }
+            0x03u8 => { .set_bc(unchecked_add(.get_bc(), 1u16)) }
+            0x13u8 => { .set_de(unchecked_add(.get_de(), 1u16)) }
+            0x23u8 => { .set_hl(unchecked_add(.get_hl(), 1u16)) }
+            0x33u8 => { .sp = unchecked_add(.sp, 1u16) }
 
             // DEC r16
-            0x0bu8 => {
-                .set_bc(wrapping_sub_u16(.get_bc(), 1))
-            }
-            0x1bu8 => {
-                .set_de(wrapping_sub_u16(.get_de(), 1))
-            }
-            0x2bu8 => {
-                .set_hl(wrapping_sub_u16(.get_hl(), 1))
-            }
-            0x3bu8 => {
-                .sp = wrapping_sub_u16(.sp, 1)
-            }
+            0x0bu8 => { .set_bc(wrapping_sub_u16(.get_bc(), 1)) }
+            0x1bu8 => { .set_de(wrapping_sub_u16(.get_de(), 1)) }
+            0x2bu8 => { .set_hl(wrapping_sub_u16(.get_hl(), 1)) }
+            0x3bu8 => { .sp = wrapping_sub_u16(.sp, 1) }
 
             // DAA
             0x27u8 => {
@@ -875,7 +853,7 @@ class CPU {
                 if .get_flag(Flag::H) {
                     adjust = adjust | 0x06u8
                 }
-                if .get_flag(Flag::N) {
+                if not .get_flag(Flag::N) {
                     if (a & 0x0Fu8) > 0x09 {
                         adjust = adjust | 0x06u8
                     }
@@ -886,6 +864,7 @@ class CPU {
                 } else {
                     a = wrapping_sub_u8(a, adjust)
                 }
+                
                 .set_flag(Flag::C, value: adjust >= 0x60u8)
                 .set_flag(Flag::H, value: false)
                 .set_flag(Flag::Z, value: a == 0x00)
@@ -923,22 +902,16 @@ class CPU {
             }
 
             // HALT
-            0x76u8 => {
-                .halted = true
-            }
+            0x76u8 => { .halted = true }
 
             // STOP
             0x10u8 => { }
 
             // DI
-            0xF3u8 => {
-                .ei = false
-            }
+            0xF3u8 => { .ei = false }
 
             // EI
-            0xFBu8 => {
-                .ei = true
-            }
+            0xFBu8 => { .ei = true }
 
             // RLCA
             0x07u8 => {
@@ -965,12 +938,8 @@ class CPU {
             }
 
             // JUMP
-            0xC3u8 => {
-                .pc = .fetch_word(mmu)
-            }
-            0xE9u8 => {
-                .pc = .get_hl()
-            }
+            0xC3u8 => { .pc = .fetch_word(mmu) }
+            0xE9u8 => { .pc = .get_hl() }
 
             // JUMP IF
             0xC2u8 | 0xCAu8 | 0xD2u8 | 0xDAu8 => {
@@ -985,9 +954,7 @@ class CPU {
                         abort()
                     }
                 }
-                if cond {
-                    .pc = pc
-                }
+                if cond { .pc = pc }
             }
 
             // JR
@@ -1066,9 +1033,7 @@ class CPU {
             }
 
             // RET
-            0xC9u8 => {
-                .pc = .stack_pop(mmu)
-            }
+            0xC9u8 => { .pc = .stack_pop(mmu) }
 
             // RET IF
             0xC0u8 | 0xC8u8 | 0xD0u8 | 0xD8u8 => {
@@ -1082,9 +1047,7 @@ class CPU {
                         abort()
                     }
                 }
-                if cond {
-                    .pc = .stack_pop(mmu)
-                }
+                if cond { .pc = .stack_pop(mmu) }
             }
 
             // RETI
@@ -1615,21 +1578,39 @@ class CPU {
     }
 }
 
-function wrapping_add_u8(anon a: u8, b: u8 = 1u8) -> u8 => unchecked_add(a, b)
+function wrapping_add_u8(anon a: u8, anon b: u8) -> u8 => unchecked_add(a, b)
 function wrapping_sub_u8(anon a: u8, anon b: u8) -> u8 {
     if (a == 0x00u8) and (b == 0x00u8) {
         return 0x00u8
+    } else if b == 0x00 {
+        return a
     } else {
         return unchecked_add(a, (256u16-(b as! u16)) as! u8)
     }
 }
-function wrapping_sub_u16(anon a: u16, anon b: u16) -> u16 => unchecked_add(a, (256u32-(b as! u32)) as! u16)
-function wrapping_add_u16(anon a: u16, b: u16 = 1u16) -> u16 => unchecked_add(a, b)
+function wrapping_sub_u16(anon a: u16, anon b: u16) -> u16 {
+    if (a == 0x00u16) and (b == 0x00u16) {
+        return 0x00u16
+    } else if b == 0x00u16 {
+        return a
+    } else {
+        return unchecked_add(a, (65536u32-(b as! u32)) as! u16)
+    }
+}
+
 function convert_u8_to_i8(anon a: u8) -> i8 {
     if a >= 128u8 {
         return ((a as! i32) - 256i32) as! i8
     } else {
         return a as! i8
+    }
+}
+
+function wrapping_add_signed_u8_to_u16(anon a: u16, anon b: u8) -> u16 {
+    if b >= 0x80u8 {
+        return wrapping_sub_u16(a, 256u16 - (b as! u16))
+    } else {
+        return unchecked_add(a, b as! u16)
     }
 }
 

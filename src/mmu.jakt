@@ -191,7 +191,7 @@ class MMU {
     }
 
     public function read_word(this, addr: u16) -> u16 {
-        return .read(addr) | (.read(addr: addr + 1) << 8)
+        return .read(addr) | (.read(addr: addr + 1) as! u16 << 8)
     }
 
     public function write_word(mut this, addr: u16, value: u16) {
@@ -229,7 +229,6 @@ class MMU {
         }
 
         if addr >= 0xFF01 and addr <= 0xFF02 {
-            println("LALALALLA 0x{:X}", addr)
             if addr == 0xFF01 {
                 return .serial_data0
             }
@@ -247,7 +246,6 @@ class MMU {
         }
 
         if addr >= 0xFF10 and addr <= 0xFF3F {
-            // println("WARNING: APU Memory Addr Not implemented yet")
             return 0x00
         }
 

@@ -459,11 +459,3 @@ struct Cartridge {
         return n as! usize
     }
 }
-
-// BMC1 Memory Range (0000-7FFF)
-
-// 0000-3FFF - ROM Bank 00 (Read Only)
-// This area always contains the first 16KBytes of the cartridge ROM.
-struct MBC1 {
-
-}

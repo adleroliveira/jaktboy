@@ -15,3 +15,19 @@ I decided to take the Jakt [Programming Language](https://github.com/SerenityOS/
 - http://www.codeslinger.co.uk/pages/projects/gameboy.html
 - https://www.chibiakumas.com/z80/Gameboy.php
 - https://ia803208.us.archive.org/9/items/GameBoyProgManVer1.1/GameBoyProgManVer1.1.pdf
+
+
+## Blargg Tests Passing
+
+### CPU
+- [x] 01-special
+- [ ] 02-interrupts
+- [x] 03-op sp,hl
+- [x] 04-op r,imm
+- [x] 05-op rp
+- [x] 06-ld r,r
+- [ ] 07-jr,jp,call,ret,rst
+- [x] 08-misc instrs
+- [ ] 09-op r,r
+- [ ] 10-bit ops
+- [ ] 11-op a,(hl)

@@ -10,7 +10,7 @@ class System {
         mut file = File::open_for_reading(filename)
         let buffer = file.read_all()
         let cartridge = Cartridge::load(buffer)
-        mut cpu = CPU::init(terminal: Terminal::GB, debug: true)
+        mut cpu = CPU::init(terminal: Terminal::GB, debug: false)
         mut mmu = MMU::init(cartridge)
         return System(cpu, mmu)
     }

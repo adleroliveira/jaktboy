@@ -44,8 +44,8 @@ class GPU {
         return match addr {
             0xff44u16 => .ly
             else => {
-                eprintln("GPU: MEMORY ACCESS OUT OF BOUND/NOT IMPLEMENTED ADDR 0x{:X}", addr)
-                abort()
+                println("GPU: MEMORY ACCESS OUT OF BOUND/NOT IMPLEMENTED ADDR 0x{:X}", addr)
+                return 0x00u8
             }
         }
     }
