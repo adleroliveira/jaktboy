@@ -8,7 +8,12 @@ function main(args: [String]) {
     }
 
     let filename = args[1]
-    mut system = System::init(filename)
+    mut breakpoint: usize? = None
+    // if args.size() > 2 {
+    //     breakpoint = args[2].to_int()! as! usize
+    // }
+    // breakpoint = 0xC2D9
+    mut system = System::init(filename, breakpoint)
     system.run()
     // println("{}", system)
 }

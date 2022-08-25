@@ -5,20 +5,21 @@ import gpu { GPU }
 enum InterruptFlag: u8 {
     VBlank = 0
     LCDStat = 1
-    Timer = 3
-    Serial = 4
-    Joypad = 5
+    Timer = 2
+    Serial = 3
+    Joypad = 4
 }
 
-class InterruptMasterEnable {
+class InterruptFlagData {
     public data: u8
-    public function init() throws => InterruptMasterEnable(data: 0xE1)
-    public function set(mut this, flag: InterruptFlag) { .data = .data | (1 << (flag as! u8)) }
+    public function init() throws => InterruptFlagData(data: 0xE1)
+    public function set(mut this, flag: InterruptFlag) {
+        .data = .data | (1 << (flag as! u8))
+    }
 }
 
 struct Serial {
     message: String
-
 }
 
 struct Clock {
@@ -37,18 +38,32 @@ struct Clock {
 
 struct TimerRegister {
     div: u8
-    tima: u8
-    tma: u8
-    tac: u8
+    tima: u8 // Timer 0xFF05
+    tma: u8 // Timer Modulator 0xFF06
+    tac: u8 // Timer Controller 0xFF07
 }
 
+// CPU Clock: 4.194304 MHz = 4194304 Hz
+// Timer Controller (TAC) defines the frequency at wich the Timer (TIMA) will increase
+// Whenever the timer overflows, it will be set up back to the value specified in the
+// Time Modulator (TMA)
+//
+// Possible frequencies (TAC)
+// 4096 Hz (one timer increment each 1024 CPU cycles)
+// 16384 Hz (one timer increment each 256 CPU cycles)
+// 65536 Hz (one timer increment each 64 CPU cycles)
+// 262144 Hz (one timer increment each 16 CPU cycles)
+
+// Divider Clock is updated at a 16384 Hz frequency
+
+
 struct Timer {
-    registers: TimerRegister
+    public registers: TimerRegister
     div_clock: Clock
     tma_clock: Clock
 
     public function init() => Timer(
-        registers: TimerRegister(div: 0u8, tima: 0u8, tma: 0u8, tac: 0u8)
+        registers: TimerRegister(div: 0xABu8, tima: 0u8, tma: 0u8, tac: 0xF8u8)
         div_clock: Clock::init(256)
         tma_clock: Clock::init(1024)
     )
@@ -67,12 +82,22 @@ struct Timer {
     public function write(mut this, addr: u16, value: u8) {
         match addr {
             0xFF04u16 => {
+                // println("RESETTING DIVIDER CLOCK 0x{:X}", value)
                 .registers.div = 0x00
                 .div_clock.n = 0x00
             }
-            0xFF05u16 => { .registers.tima = value }
-            0xFF06u16 => { .registers.tma = value }
-            0xFF07u16 => { .update_period(value) }
+            0xFF05u16 => { 
+                // println("Setting UP TIMA: 0x{:X}", value)
+                .registers.tima = value
+            }
+            0xFF06u16 => {
+                // println("Setting UP TMA: 0x{:X}", value)
+                .registers.tma = value
+            }
+            0xFF07u16 => {
+                // println("Setting UP TAC: 0x{:X}", value)
+                .update_period(value)
+            }
             else => {
                 eprintln("Unsupported timer address")
                 abort()
@@ -96,17 +121,21 @@ struct Timer {
             .registers.tima = .registers.tma
         }
         .registers.tac = value
+        
+        // println("Period Updated {:#}", this)
     }
 
-    function tick(mut this, cycles: u32, ime: &mut InterruptMasterEnable) {
-        .registers.div = wrapping_add_u8(.registers.div, .div_clock.next(cycles) as! u8)
+    function tick(mut this, cycles: u32, intf: &mut InterruptFlagData) {
+        .registers.div = unchecked_add(.registers.div, .div_clock.next(cycles) as! u8)
+
+        // If the second BIT from the TAC register is 1 it means the Time Controller is enabled
         if (.registers.tac & 0x04) != 0x00 {
             let n = .tma_clock.next(cycles)
             for i in 0..n {
-                .registers.tima = wrapping_add_u8(.registers.tima, 1)
+                .registers.tima = unchecked_add(.registers.tima, 1u8)
                 if .registers.tima == 0x00 {
                     .registers.tima = .registers.tma
-                    ime.set(flag: InterruptFlag::Timer)
+                    intf.set(flag: InterruptFlag::Timer)
                 }
             }
         }
@@ -127,11 +156,11 @@ class MMU {
     wram: [u8] // 32Kb
     hram: [u8]
     wram_bank: usize
-    ime: InterruptMasterEnable // Interrupt Master Enable Flag
-    ie: u8 // Interrupt Enable
+    public intf: InterruptFlagData // Interrupt Master Enable Flag
+    public inte: u8 // Interrupt Enable
     cartridge: Cartridge
     joypad: Joypad
-    timer: Timer
+    public timer: Timer
     gpu: GPU
     speed: u8
     public serial_data0: u8
@@ -145,8 +174,8 @@ class MMU {
             wram: [0u8; 0x8000]
             hram: [0u8; 0x7F]
             wram_bank: 0x01
-            ime: InterruptMasterEnable::init()
-            ie: 0x00u8
+            intf: InterruptFlagData::init() // Used to request an specific interrupt
+            inte: 0x00u8 // Used to determine which interrupt can be enabled (Override by IME)
             cartridge
             joypad
             timer: Timer::init()
@@ -157,9 +186,6 @@ class MMU {
             shift: false
         )
 
-        mmu.write(addr: 0xFF05, value: 0x00)
-        mmu.write(addr: 0xFF06, value: 0x00)
-        mmu.write(addr: 0xFF07, value: 0x00)
         mmu.write(addr: 0xFF10, value: 0x80)
         mmu.write(addr: 0xFF11, value: 0xBF)
         mmu.write(addr: 0xFF12, value: 0xF3)
@@ -242,7 +268,8 @@ class MMU {
         }
 
         if addr == 0xFF0F {
-            return .ime.data
+            // println("READING intf 0x{:X}", .intf.data)
+            return .intf.data
         }
 
         if addr >= 0xFF10 and addr <= 0xFF3F {
@@ -274,7 +301,8 @@ class MMU {
         }
 
         if addr == 0xFFFF {
-            return .ie
+            // println("READING inte 0x{:X}", .inte)
+            return .inte
         }
 
         // println("WARNING: Access to data out of bounds/not implemented memory address {:x}", addr)
@@ -286,7 +314,7 @@ class MMU {
         if (addr >= 0x0000 and addr <= 0x7FFF) or (addr >= 0xA000 and addr <= 0xbFFF) {
             .cartridge.write(addr, value)
         } else if addr >= 0x8000 and addr <= 0x9FFF {
-            println("Trying to write to the GPU")
+            // println("Trying to write to the GPU")
         } else if addr >= 0xC000 and addr <= 0xCFFF {
             .wram[addr - 0xC000] = value
 
@@ -298,7 +326,7 @@ class MMU {
         } else if addr >= 0xF000 and addr <= 0xFDFF {
             .wram[addr - 0xF000 + (0x1000uz * .wram_bank) as! u16] = value
         } else if addr >= 0xFE00 and addr <= 0xFE9F {
-            println("Trying to write to the GPU")
+            // println("Trying to write to the GPU")
         } else if addr >= 0xFEA0 and addr <= 0xFEFF {
             // NOOP region
             // println("Something is trying to set values in a noop region")
@@ -315,7 +343,7 @@ class MMU {
         } else if addr >= 0xFF04 and addr <= 0xFF07 {
             .timer.write(addr, value)
         } else if addr >= 0xFF10 and addr <= 0xFF3F {
-            println("WARNING: APU Memory Addr Not implemented yet")
+            // println("WARNING: APU Memory Addr Not implemented yet")
         } else if addr == 0xFF00 {
             guard value <= 0xF1 else {
                 eprintln("ASSERTION FAILED: DMA TRANSFER")
@@ -333,16 +361,17 @@ class MMU {
                 else => (value & 0x7) as! usize
             }
         } else if addr == 0xFF0F {
-            .ime.data = value
+            // println("INTF SET TO 0x{:X}", value | 0xE0)
+            .intf.data = value | 0xE0
         } else if (addr >= 0xFF40 and addr <= 0xFF45 or (addr >= 0xFF47 and addr <= 0xFF4B)) or addr == 0xFF4F {
-            println("Trying to write to the GPU")
+            // println("Trying to write to the GPU")
         } else if addr == 0xFF4D {
             .shift = ((value & 0x01) == 0x01)
         } else if addr >= 0xFF80 and addr < 0xFFFE {
             .hram[addr - 0xFF80] = value
         } else if addr == 0xFFFF {
-            println("ENABLE INTERRUPT SET TO {}", value)
-            .ie = value
+            // println("INTE SET TO {}", value)
+            .inte = value
         } else {
             eprintln("Trying to set value on out of bounds/not implemented memory address {:x}", addr)
             abort()
@@ -352,9 +381,6 @@ class MMU {
     public function tick(mut this, cycles: u32) {
         let cpu_divider = .speed as! u32
         let cpu_cycles = cycles * cpu_divider
-        this.timer.tick(cycles, ime: &mut .ime)
+        .timer.tick(cycles: cpu_cycles, intf: &mut .intf)
     }
 }
-
-
-function wrapping_add_u8(anon a: u8, b: u8 = 1u8) -> u8 => unchecked_add(a, b)

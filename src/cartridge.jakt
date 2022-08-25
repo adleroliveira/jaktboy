@@ -288,20 +288,20 @@ function to_string(anon slice: ArraySlice<u8>) throws -> String {
 function to_word(anon a: u8, anon b: u8) => ((a << 8) | b) as! u16
 
 function rom_size(anon b: u8) -> usize {
-    let bank = 16384
+    let bank = 16384uz
     return match b {
-        0x00u8 => bank * 2
-        0x01u8 => bank * 4
-        0x02u8 => bank * 8
-        0x03u8 => bank * 16
-        0x04u8 => bank * 32
-        0x05u8 => bank * 64
-        0x06u8 => bank * 128
-        0x07u8 => bank * 256
-        0x08u8 => bank * 512
-        0x52u8 => bank * 72
-        0x53u8 => bank * 80
-        0x54u8 => bank * 96
+        0x00u8 => bank * 2uz
+        0x01u8 => bank * 4uz
+        0x02u8 => bank * 8uz
+        0x03u8 => bank * 16uz
+        0x04u8 => bank * 32uz
+        0x05u8 => bank * 64uz
+        0x06u8 => bank * 128uz
+        0x07u8 => bank * 256uz
+        0x08u8 => bank * 512uz
+        0x52u8 => bank * 72uz
+        0x53u8 => bank * 80uz
+        0x54u8 => bank * 96uz
         else => {
             eprintln("Unknown Destination code: 0x{:X}", b)
             abort()

@@ -25,9 +25,11 @@ class CPU {
     l: u8
     sp: u16 // Stack Pointer
     public pc: u16 // Program Counter
-    ei: bool // Enable Interrupt Flag
+    ei: bool // IME
     public halted: bool
-    public ticks: i64
+    public ticks: usize
+    public breakpoint: u16?
+    public paused: bool
     debug: bool
     debug_message: String
     previous_debug_message: String
@@ -53,6 +55,8 @@ class CPU {
             ei: true
             halted: false
             ticks: 0
+            breakpoint: None
+            paused: false
             debug
             debug_message: ""
             previous_debug_message: ""
@@ -83,7 +87,7 @@ class CPU {
         }
 
         if this.debug {
-            println("{:0>8X} - {:04X}: OPCPDE({:02X}) NN({:02X} {:02X}) Flags: {} AF: {:02X}{:02X} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X} | {}", .ticks, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), flags, .a, .f, .b, .c, .d, .e, .h, .l, .sp, .debug_message)
+            println("{:0>12} [INTE: 0x{:X}, INTF: 0x{:X}] - {:04X}: OPCPDE({:02X}) NN({:02X} {:02X}) Flags: {} AF: {:02X}{:02X} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X} [IE: {}]| {}", .ticks, mmu.inte, mmu.intf.data, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), flags, .a, .f, .b, .c, .d, .e, .h, .l, .sp, .ei, .debug_message)
         }
         // 
         if mmu.serial_data1 == 0x81 {
@@ -98,8 +102,8 @@ class CPU {
             .previous_debug_message = .debug_message
         }
 
-        if .pc == 0xC33F {
-            // .halted = true
+        if .breakpoint.has_value() and .pc == .breakpoint! {
+            .paused = true
         }
     }
 
@@ -134,7 +138,9 @@ class CPU {
         let intf = mmu.read(addr: 0xFF0F)
         let inte = mmu.read(addr: 0xFFFF)
         let ii = intf & inte
-        if ii == 0x00 {
+
+        // Make sure both interrupt request and interrupt enabled bits are set before continuing with the interrupt
+        guard ii != 0x00 else {
             return 0
         }
 
@@ -144,8 +150,9 @@ class CPU {
         }
         
         .ei = false
+
         let n = trailing_zeros(ii)
-        let int_flag = intf & not(1 << n)
+        let int_flag = intf & ~(1 << n)
         mmu.write(addr: 0xFF0F, value: int_flag)
         .stack_push(mmu, value: .pc)
         .pc = 0x0040u16 | ((n as! u16) << 3)
@@ -164,6 +171,7 @@ class CPU {
             cycles = .execute(mmu)
         }
         
+        .ticks += (cycles * 4) as! usize
         return cycles * 4
     }
 
@@ -401,7 +409,7 @@ class CPU {
     }
 
     function alu_res(mut this, anon a: u8, anon b: u8, opcode: u8) -> u8 {
-        return a & not (1 << b)
+        return a & ~(1 << b)
     }
 
     function alu_set(mut this, anon a: u8, anon b: u8, opcode: u8) -> u8 {
@@ -409,7 +417,6 @@ class CPU {
     }
 
     function ld_r8_n8(mut this, anon opcode: u8, mmu: &mut MMU) throws {
-        let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
         match (opcode >> 3) & 7 {
             0u8 => { .b = .fetch(mmu) }
             1u8 => { .c = .fetch(mmu) }
@@ -461,7 +468,6 @@ class CPU {
     }
 
     function ld_r8_r8(mut this, anon opcode: u8) throws {
-        let regname = [0u8: "B", 1u8: "C", 2u8: "D", 3u8: "E", 4u8: "H", 5u8: "L", 7u8: "A"]
         let value = match opcode & 7 {
             0u8 => .b
             1u8 => .c
@@ -573,7 +579,7 @@ class CPU {
 
             // ld (FF00+n),A
             0xE0u8 => {
-                let addr = 0xff00u16 | (.fetch(mmu) as! u16)
+                let addr = 0xFF00u16 | (.fetch(mmu) as! u16)
                 mmu.write(addr, value: .a)
             }
 
@@ -908,10 +914,16 @@ class CPU {
             0x10u8 => { }
 
             // DI
-            0xF3u8 => { .ei = false }
+            0xF3u8 => {
+                // println("IME - Disable Interrupt")
+                .ei = false
+            }
 
             // EI
-            0xFBu8 => { .ei = true }
+            0xFBu8 => {
+                // println("IME - Enable Interrupt")
+                .ei = true
+            }
 
             // RLCA
             0x07u8 => {
@@ -1052,8 +1064,8 @@ class CPU {
 
             // RETI
             0xD9u8 => {
-                .pc = .stack_pop(mmu)
                 .ei = true
+                .pc = .stack_pop(mmu)
             }
 
             // Extended Bit Operations
@@ -1129,8 +1141,6 @@ class CPU {
             }
             else => 0x00i64
         }
-
-        .ticks++
 
         if opcode == 0xCBu8 {
             return cb_cycles[opcode]
@@ -1579,6 +1589,7 @@ class CPU {
 }
 
 function wrapping_add_u8(anon a: u8, anon b: u8) -> u8 => unchecked_add(a, b)
+
 function wrapping_sub_u8(anon a: u8, anon b: u8) -> u8 {
     if (a == 0x00u8) and (b == 0x00u8) {
         return 0x00u8
@@ -1588,6 +1599,7 @@ function wrapping_sub_u8(anon a: u8, anon b: u8) -> u8 {
         return unchecked_add(a, (256u16-(b as! u16)) as! u8)
     }
 }
+
 function wrapping_sub_u16(anon a: u16, anon b: u16) -> u16 {
     if (a == 0x00u16) and (b == 0x00u16) {
         return 0x00u16

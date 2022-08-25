@@ -6,11 +6,14 @@ class System {
     public cpu: CPU
     mmu: MMU
 
-    public function init(filename: String) throws -> System {
+    public function init(filename: String, breakpoint: usize? = None) throws -> System {
         mut file = File::open_for_reading(filename)
         let buffer = file.read_all()
         let cartridge = Cartridge::load(buffer)
         mut cpu = CPU::init(terminal: Terminal::GB, debug: false)
+        if breakpoint.has_value() {
+            cpu.breakpoint = breakpoint! as! u16
+        }
         mut mmu = MMU::init(cartridge)
         return System(cpu, mmu)
     }
@@ -31,7 +34,8 @@ class System {
             // if .cpu.ticks >= 2000 {
             //     .cpu.halted = true
             // }
-            if .cpu.halted {
+            if .cpu.paused {
+                println("Breakpoint reached 0x{:X}", .cpu.breakpoint!)
                 break
             }
         }

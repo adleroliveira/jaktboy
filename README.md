@@ -21,7 +21,7 @@ I decided to take the Jakt [Programming Language](https://github.com/SerenityOS/
 
 ### CPU
 - [x] 01-special
-- [ ] 02-interrupts
+- [x] 02-interrupts
 - [x] 03-op sp,hl
 - [x] 04-op r,imm
 - [x] 05-op rp
