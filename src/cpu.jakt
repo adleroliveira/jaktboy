@@ -87,7 +87,7 @@ class CPU {
         }
 
         if this.debug {
-            println("{:0>12} [INTE: 0x{:X}, INTF: 0x{:X}] - {:04X}: OPCPDE({:02X}) NN({:02X} {:02X}) Flags: {} AF: {:02X}{:02X} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X} [IE: {}]| {}", .ticks, mmu.inte, mmu.intf.data, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), flags, .a, .f, .b, .c, .d, .e, .h, .l, .sp, .ei, .debug_message)
+            println("{:0>12} [INTE: 0x{:X}, INTF: 0x{:X}] - {:04X}: OPCPDE({:02X}) NN({:02X} {:02X}) Flags: {} AF: {:02X}{:02X} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X} ($0x{:04X}) [IE: {}]| {}", .ticks, mmu.inte, mmu.intf.data, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), flags, .a, .f, .b, .c, .d, .e, .h, .l, .sp, mmu.read_word(addr: .sp), .ei, .debug_message)
         }
         // 
         if mmu.serial_data1 == 0x81 {
@@ -1640,6 +1640,9 @@ function panic(anon message: String) {
 }
 
 function trailing_zeros(anon mut x: u8) -> i64 {
+    if x == 0x00 {
+        return 8
+    }
     mut count = 0
     while ((x & 1) == 0) {
         x = x >> 1
