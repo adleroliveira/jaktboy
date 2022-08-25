@@ -26,7 +26,7 @@ I decided to take the Jakt [Programming Language](https://github.com/SerenityOS/
 - [x] 04-op r,imm
 - [x] 05-op rp
 - [x] 06-ld r,r
-- [ ] 07-jr,jp,call,ret,rst
+- [x] 07-jr,jp,call,ret,rst
 - [x] 08-misc instrs
 - [ ] 09-op r,r
 - [ ] 10-bit ops
