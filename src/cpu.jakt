@@ -26,8 +26,11 @@ class CPU {
     sp: u16 // Stack Pointer
     public pc: u16 // Program Counter
     ei: bool // IME
+    op_cycles: [i64]
+    cb_cycles: [i64]
+
     public halted: bool
-    public ticks: usize
+    public ticks: i64
     public breakpoint: u16?
     public paused: bool
     debug: bool
@@ -35,7 +38,45 @@ class CPU {
     previous_debug_message: String
 
     public function init(terminal: Terminal, debug: bool = false) throws -> CPU {
-        mut s = StringBuilder::create()
+
+        let op_cycles: [i64] = [
+            1, 3, 2, 2, 1, 1, 2, 1, 5, 2, 2, 2, 1, 1, 2, 1, // 0
+            0, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1, // 1
+            2, 3, 2, 2, 1, 1, 2, 1, 2, 2, 2, 2, 1, 1, 2, 1, // 2
+            2, 3, 2, 2, 3, 3, 3, 1, 2, 2, 2, 2, 1, 1, 2, 1, // 3
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 4
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 5
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 6
+            2, 2, 2, 2, 2, 2, 0, 2, 1, 1, 1, 1, 1, 1, 2, 1, // 7
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 8
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 9
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // a
+            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // b
+            2, 3, 3, 4, 3, 4, 2, 4, 2, 4, 3, 0, 3, 6, 2, 4, // c
+            2, 3, 3, 0, 3, 4, 2, 4, 2, 4, 3, 0, 3, 0, 2, 4, // d
+            3, 3, 2, 0, 0, 4, 2, 4, 4, 1, 4, 0, 0, 0, 2, 4, // e
+            3, 3, 2, 1, 0, 4, 2, 4, 3, 2, 4, 1, 0, 0, 2, 4, // f
+        ]
+
+        let cb_cycles: [i64] = [
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 0
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 1
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 2
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 3
+            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 4
+            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 5
+            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 6
+            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 7
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 8
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 9
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // a
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // b
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // c
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // d
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // e
+            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // f
+        ]
+
         return CPU(
             a: match terminal {
                 GB => 0x01
@@ -53,6 +94,8 @@ class CPU {
             sp: 0xFFFE
             pc: 0x0100
             ei: true
+            op_cycles,
+            cb_cycles
             halted: false
             ticks: 0
             breakpoint: None
@@ -63,31 +106,29 @@ class CPU {
         )
     }
 
-    public function print_debug_info(mut this, opcode: u8, mmu: &mut MMU) throws {
-        mut flags = ""
+    function flag_names(this) throws -> String {
+        mut flag_z = "-"
+        mut flag_n = "-"
+        mut flag_h = "-"
+        mut flag_c = "-"
         if .get_flag(Flag::Z) {
-            flags += "Z"
-        } else {
-            flags += "-"
+            flag_z = "Z"
         }
         if .get_flag(Flag::N) {
-            flags += "N"
-        } else {
-            flags += "-"
+            flag_n = "N"
         }
         if .get_flag(Flag::H) {
-            flags += "H"
-        } else {
-            flags += "-"
+            flag_h = "H"
         }
         if .get_flag(Flag::C) {
-            flags += "C"
-        } else {
-            flags += "-"
+            flag_c = "C"
         }
+        return format("{} {} {} {}", flag_z, flag_n, flag_h, flag_c)
+    }
 
+    public function print_debug_info(mut this, opcode: u8, mmu: &mut MMU) throws {
         if this.debug {
-            println("{:0>12} [INTE: 0x{:X}, INTF: 0x{:X}] - {:04X}: OPCPDE({:02X}) NN({:02X} {:02X}) Flags: {} AF: {:02X}{:02X} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X} ($0x{:04X}) [IE: {}]| {}", .ticks, mmu.inte, mmu.intf.data, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), flags, .a, .f, .b, .c, .d, .e, .h, .l, .sp, mmu.read_word(addr: .sp), .ei, .debug_message)
+            println("{:0>12} [INTE: 0x{:X}, INTF: 0x{:X}] - {:04X}: OPCPDE({:02X}) NN({:02X} {:02X}) Flags: {} AF: {:02X}{:02X} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X} SP: {:04X} ($0x{:04X}) [IE: {}]| {}", .ticks, mmu.inte, mmu.intf.data, .pc, opcode, mmu.read(addr: .pc + 1), mmu.read(addr: .pc + 2), .flag_names(), .a, .f, .b, .c, .d, .e, .h, .l, .sp, mmu.read_word(addr: .sp), .ei, .debug_message)
         }
         // 
         if mmu.serial_data1 == 0x81 {
@@ -171,7 +212,7 @@ class CPU {
             cycles = .execute(mmu)
         }
         
-        .ticks += (cycles * 4) as! usize
+        .ticks += (cycles * 4) as! i64
         return cycles * 4
     }
 
@@ -500,46 +541,6 @@ class CPU {
         .print_debug_info(opcode: mmu.read(addr: .pc), mmu)
             
         let opcode = .fetch(mmu)
-        mut cycles: u32 = 0
-
-        let op_cycles: [i64] = [
-            1, 3, 2, 2, 1, 1, 2, 1, 5, 2, 2, 2, 1, 1, 2, 1, // 0
-            0, 3, 2, 2, 1, 1, 2, 1, 3, 2, 2, 2, 1, 1, 2, 1, // 1
-            2, 3, 2, 2, 1, 1, 2, 1, 2, 2, 2, 2, 1, 1, 2, 1, // 2
-            2, 3, 2, 2, 3, 3, 3, 1, 2, 2, 2, 2, 1, 1, 2, 1, // 3
-            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 4
-            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 5
-            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 6
-            2, 2, 2, 2, 2, 2, 0, 2, 1, 1, 1, 1, 1, 1, 2, 1, // 7
-            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 8
-            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // 9
-            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // a
-            1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1, // b
-            2, 3, 3, 4, 3, 4, 2, 4, 2, 4, 3, 0, 3, 6, 2, 4, // c
-            2, 3, 3, 0, 3, 4, 2, 4, 2, 4, 3, 0, 3, 0, 2, 4, // d
-            3, 3, 2, 0, 0, 4, 2, 4, 4, 1, 4, 0, 0, 0, 2, 4, // e
-            3, 3, 2, 1, 0, 4, 2, 4, 3, 2, 4, 1, 0, 0, 2, 4, // f
-        ]
-
-        let cb_cycles: [i64] = [
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 0
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 1
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 2
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 3
-            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 4
-            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 5
-            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 6
-            2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2, // 7
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 8
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // 9
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // a
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // b
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // c
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // d
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // e
-            2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2, // f
-        ]
-
         match opcode {
             // LD Instructions
             // ==========================================================================================================
@@ -1147,9 +1148,9 @@ class CPU {
         }
 
         if opcode == 0xCBu8 {
-            return cb_cycles[opcode]
+            return .cb_cycles[opcode]
         } else {
-            return op_cycles[opcode] + extra_cycles
+            return .op_cycles[opcode] + extra_cycles
         }
     }
 

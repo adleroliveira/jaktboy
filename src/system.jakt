@@ -19,9 +19,6 @@ class System {
     }
 
     public function tick(mut this) throws -> u32 {
-        if .mmu.read(addr: .cpu.pc) == 0x10 {
-            println("SWITCH SPEED")
-        }
         let cycles = .cpu.tick(mmu: &mut .mmu)
         .mmu.tick(cycles)
         return cycles

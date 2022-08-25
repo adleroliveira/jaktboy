@@ -10,7 +10,7 @@ enum InterruptFlag: u8 {
     Joypad = 4
 }
 
-class InterruptFlagData {
+struct InterruptFlagData {
     public data: u8
     public function init() throws => InterruptFlagData(data: 0xE1)
     public function set(mut this, flag: InterruptFlag) {
